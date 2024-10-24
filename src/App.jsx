@@ -10,7 +10,7 @@ const App = () => {
   const [userAgent, setUserAgent] = useState(null);
   const [registered, setRegistered] = useState(false);
   const [session, setSession] = useState(null);
-  const [target, setTarget] = useState("");
+  const [target, setTarget] = useState("905418733299");
   const localAudioRef = useRef(null);
   const remoteAudioRef = useRef(null);
   const [username, setUsername] = useState("2000");
@@ -31,7 +31,12 @@ const App = () => {
 
     const transportOptions = {
       server: `wss://${wsServer}:${wsPort}${serverPath}`,
-      traceSip: true
+      traceSip: true,
+      media: {
+        remote: {
+          audio: true,
+        },
+      },
     };
 
     const userAgentOptions = {
@@ -39,6 +44,7 @@ const App = () => {
       transportOptions,
       authorizationUsername: username,
       authorizationPassword: password,
+      displayName: "Yahya Test",
     };
 
     const ua = new UserAgent(userAgentOptions);
@@ -59,7 +65,7 @@ const App = () => {
     ua.delegate = {
       onInvite(invitation) {
         invitation.accept().then((session) => {
-          console.log("Incoming session accepted");
+          console.log("Davet kabul edildi:", session);
           handleSession(session);
         });
       },
@@ -69,6 +75,7 @@ const App = () => {
   // Arama başlatma fonksiyonu
   const handleCall = async () => {
     if (userAgent && registered) {
+      console.log("Arama if içinde başladı");
       const targetURI = new URI("sip", target, wsServer); // Hedef URI burada oluşturuldu
 
       try {
@@ -78,7 +85,7 @@ const App = () => {
             deviceId: { exact: selectedMicrophone }, // Seçilen mikrofon deviceId'sini kullan
           },
         });
-
+        console.log("MediaStream");
         if (localAudioRef.current) {
           localAudioRef.current.srcObject = mediaStream; // Ses akışını yerel ses kaynağına bağla
         }
@@ -95,11 +102,12 @@ const App = () => {
         inviter
           .invite()
           .then((session) => {
+            session.delegate.onAccept((a)=>console.log("session.delegate içi",a))
             handleSession(session);
             // Hoparlör ayarını burada ayarlamak gerekebilir
             if (session && session.sessionDescriptionHandler) {
               const remoteStream =
-                session.sessionDescriptionHandler.remoteMediaStream;
+                session.sessionDescriptionHandler.peerConnection;
               const audioElements = document.querySelectorAll("audio"); // Eğer birden fazla ses elementi varsa
 
               audioElements.forEach((audio) => {
@@ -110,6 +118,24 @@ const App = () => {
           .catch((error) => {
             console.error("Invite hata:", error);
           });
+
+        // inviter?.statChange?.addListener((state) => {
+        //   switch (state) {
+        //     case SessionState.Initial:
+        //       break;
+        //     case SessionState.Establishing:
+        //       break;
+        //     case SessionState.Established:
+        //       setupRemoteMedia(inviter);
+        //       break;
+        //     case SessionState.Terminating:
+        //     // fall through
+        //     case SessionState.Terminated:
+        //       break;
+        //     default:
+        //       throw new Error("Unknown session state.");
+        //   }
+        // });
       } catch (error) {
         console.error("Media akışı alma hatası:", error);
       }
@@ -118,31 +144,45 @@ const App = () => {
     }
   };
 
+  function setupRemoteMedia(session) {
+    const remoteStream = session.sessionDescriptionHandler.peerConnection
+      .getReceivers()
+      .map((receiver) => receiver.track);
+
+    // Burada remoteStream, uzaktaki kullanıcının medya akışı (ses/video) olur
+    const remoteAudio = document.getElementById(selectedSpeaker);
+    if (remoteAudio) {
+      remoteAudio.srcObject = new MediaStream(remoteStream);
+      remoteAudio.play();
+    }
+  }
+
   // Oturum yönetimi (session) ve medya akışını ayarlama
+
   const handleSession = (session) => {
     console.log("handleSession Session:", session);
+  
     session.delegate = {
       onSessionDescriptionHandler() {
-        // const peerConnection =
-        //   session.sessionDescriptionHandler._peerConnection;
-        // peerConnection.addEventListener("track", (event) => {
-        //   if (event.track.kind === "audio") {
-        //     const remoteStream = new MediaStream([event.track]);
-        //     if (remoteAudioRef.current) {
-        //       remoteAudioRef.current.srcObject = remoteStream;
-        //     }
-        //   }
-        // });
+        console.log("Session Description Handler hazır");
+        const peerConnection = session.sessionDescriptionHandler.peerConnection;
+  
+        // Track olayını dinle
+        peerConnection.addEventListener("track", (event) => {
+          console.log("Track olayı:", event);
+          if (event.track.kind === "audio") {
+            const remoteStream = new MediaStream();
+            remoteStream.addTrack(event.track); // Uzaktaki ses akışını al
+            
+            if (remoteAudioRef.current) {
+              remoteAudioRef.current.srcObject = remoteStream; // Ses akışını bağla
+              remoteAudioRef.current.play(); // Oynatmaya başla
+            }
+          }
+        });
       },
     };
-
-    session.stateChange.addListener((state) => {
-      if (state === SessionState.Terminated) {
-        console.log("Call ended.");
-        setSession(null);
-      }
-    });
-
+  
     setSession(session);
   };
 
@@ -157,7 +197,7 @@ const App = () => {
   //Media select functions
   useEffect(() => {
     const getDevices = async () => {
-      const deviceInfos = await navigator.mediaDevices.enumerateDevices();
+      const deviceInfos = await navigator?.mediaDevices?.enumerateDevices();
       setDevices(deviceInfos);
 
       // Varsayılan mikrofon ve hoparlörü ayarla
@@ -212,6 +252,7 @@ const App = () => {
             <input
               type="text"
               placeholder="Target username"
+              value={target ?? ""}
               onChange={(e) => setTarget(e.target.value)}
             />
             <button onClick={handleCall}>Call</button>
@@ -220,7 +261,7 @@ const App = () => {
         )}
         {/* Ses akışı */}
         <audio ref={localAudioRef} autoPlay muted></audio> {/* Kendi sesi */}
-        <audio ref={remoteAudioRef} autoPlay></audio> {/* Karşı taraf sesi */}
+        <audio id="remote-audio" ref={remoteAudioRef} autoPlay></audio> {/* Karşı taraf sesi */}
       </div>
 
       <div>
