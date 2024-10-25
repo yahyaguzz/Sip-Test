@@ -1,27 +1,42 @@
-import { useState, useRef, useEffect } from "react";
-import { UserAgent, Registerer, Inviter, SessionState, URI } from "sip.js";
+import React, { useState, useRef, useEffect } from "react";
+import {
+  UserAgent,
+  Registerer,
+  Inviter,
+  SessionState,
+  URI,
+  Invitation,
+  Session,
+} from "sip.js";
+import { AckableIncomingResponseWithSession, OutgoingInviteRequest } from "sip.js/lib/core";
+import { SessionDescriptionHandler } from "sip.js/lib/platform/web";
 
-const App = () => {
+// Cihaz türlerini tanımlamak için gerekli tipler
+type MediaDeviceInfo = {
+  deviceId: string;
+  kind: string;
+  label: string;
+};
+
+const App: React.FC = () => {
   // media devices states
-  const [devices, setDevices] = useState([]);
-  const [selectedMicrophone, setSelectedMicrophone] = useState("");
-  const [selectedSpeaker, setSelectedSpeaker] = useState("");
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedMicrophone, setSelectedMicrophone] = useState<string>("");
+  const [selectedSpeaker, setSelectedSpeaker] = useState<string>("");
 
-  const [userAgent, setUserAgent] = useState(null);
-  const [registered, setRegistered] = useState(false);
-  const [session, setSession] = useState(null);
-  const [target, setTarget] = useState("905418733299");
-  const localAudioRef = useRef(null);
-  const remoteAudioRef = useRef(null);
-  const [username, setUsername] = useState("2000");
-  const [password, setPassword] = useState("W3$7Tr^j@");
-  const wsServer = "liwewireelectrical.site"; // SIP Sunucusu
-  const serverPath = "/ws"; // SIP Sunucusu
-  const wsPort = 8089; // SIP Sunucusu
-  // liwewireelectrical.site port 8089
-  // /ws
-  // extension : 2000
-  // secret : W3$7Tr^j@
+  const [userAgent, setUserAgent] = useState<UserAgent | null>(null);
+  const [registered, setRegistered] = useState<boolean>(false);
+  const [session, setSession] = useState<Session | null>(null);
+  const [target, setTarget] = useState<string>("905418733299");
+  const localAudioRef = useRef<HTMLAudioElement>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement>(null);
+  const [username, setUsername] = useState<string>("2000");
+  const [password, setPassword] = useState<string>("W3$7Tr^j@");
+
+  const wsServer = "liwewireelectrical.site"; // SIP Server
+  const serverPath = "/ws"; // SIP Server Path
+  const wsPort = 8089; // SIP Server Port
+
   // SIP UserAgent ve Registerer kurulum
   const handleRegister = () => {
     if (!username || !password) {
@@ -32,15 +47,10 @@ const App = () => {
     const transportOptions = {
       server: `wss://${wsServer}:${wsPort}${serverPath}`,
       traceSip: true,
-      media: {
-        remote: {
-          audio: true,
-        },
-      },
     };
 
     const userAgentOptions = {
-      uri: UserAgent.makeURI("sip:" + username + "@" + wsServer), // URI doğru şekilde oluşturuldu
+      uri: UserAgent.makeURI(`sip:${username}@${wsServer}`), // URI doğru şekilde oluşturuldu
       transportOptions,
       authorizationUsername: username,
       authorizationPassword: password,
@@ -58,15 +68,15 @@ const App = () => {
         setUserAgent(ua);
         console.log("Kullanıcı register oldu!");
       })
-      .catch((error) => {
+      .catch((error: Error) => {
         console.error("Register hata:", error);
       });
 
     ua.delegate = {
-      onInvite(invitation) {
+      onInvite(invitation: Invitation) {
         invitation.accept().then((session) => {
           console.log("Davet kabul edildi:", session);
-          handleSession(session);
+          handleSession(invitation);
         });
       },
     };
@@ -79,13 +89,12 @@ const App = () => {
       const targetURI = new URI("sip", target, wsServer); // Hedef URI burada oluşturuldu
 
       try {
-        // Seçilen mikrofonu kullanarak ses akışını al
         const mediaStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             deviceId: { exact: selectedMicrophone }, // Seçilen mikrofon deviceId'sini kullan
           },
         });
-        console.log("MediaStream");
+
         if (localAudioRef.current) {
           localAudioRef.current.srcObject = mediaStream; // Ses akışını yerel ses kaynağına bağla
         }
@@ -97,45 +106,35 @@ const App = () => {
           },
         };
 
-        const inviter = new Inviter(userAgent, targetURI, inviteOptions); // Inviter'da URI kullanıldı
+        const inviter = new Inviter(userAgent, targetURI, inviteOptions);
 
         inviter
           .invite()
-          .then((session) => {
-            session.delegate.onAccept((a)=>console.log("session.delegate içi",a))
-            handleSession(session);
-            // Hoparlör ayarını burada ayarlamak gerekebilir
-            if (session && session.sessionDescriptionHandler) {
-              const remoteStream =
-                session.sessionDescriptionHandler.peerConnection;
-              const audioElements = document.querySelectorAll("audio"); // Eğer birden fazla ses elementi varsa
+          .then(({ delegate }: OutgoingInviteRequest) => {
+            delegate = {
+              onAccept: (ackAbleSession: AckableIncomingResponseWithSession) => {
+                // if (
+                //   session &&
+                //   session?.sessionDescriptionHandler?.peerConnection
+                // ) {
+                //   const remoteStream =
+                //     session?.sessionDescriptionHandler?.peerConnection;
+                //   const audioElements = document.querySelectorAll("audio");
 
-              audioElements.forEach((audio) => {
-                audio.srcObject = remoteStream; // Hoparlör akışını ilgili elemana bağla
-              });
-            }
+                //   audioElements.forEach((audio) => {
+                //     audio.srcObject = remoteStream as unknown as MediaStream;
+                //   });
+                // }
+                // handleSession(ackAbleSession.session)
+              },
+
+            };
+
+
           })
-          .catch((error) => {
+          .catch((error: Error) => {
             console.error("Invite hata:", error);
           });
-
-        // inviter?.statChange?.addListener((state) => {
-        //   switch (state) {
-        //     case SessionState.Initial:
-        //       break;
-        //     case SessionState.Establishing:
-        //       break;
-        //     case SessionState.Established:
-        //       setupRemoteMedia(inviter);
-        //       break;
-        //     case SessionState.Terminating:
-        //     // fall through
-        //     case SessionState.Terminated:
-        //       break;
-        //     default:
-        //       throw new Error("Unknown session state.");
-        //   }
-        // });
       } catch (error) {
         console.error("Media akışı alma hatası:", error);
       }
@@ -144,45 +143,30 @@ const App = () => {
     }
   };
 
-  function setupRemoteMedia(session) {
-    const remoteStream = session.sessionDescriptionHandler.peerConnection
-      .getReceivers()
-      .map((receiver) => receiver.track);
-
-    // Burada remoteStream, uzaktaki kullanıcının medya akışı (ses/video) olur
-    const remoteAudio = document.getElementById(selectedSpeaker);
-    if (remoteAudio) {
-      remoteAudio.srcObject = new MediaStream(remoteStream);
-      remoteAudio.play();
-    }
-  }
-
   // Oturum yönetimi (session) ve medya akışını ayarlama
-
-  const handleSession = (session) => {
+  const handleSession = (session: Session) => {
     console.log("handleSession Session:", session);
-  
+
     session.delegate = {
-      onSessionDescriptionHandler() {
+      onSessionDescriptionHandler: (sessionDescriptionHandler: SessionDescriptionHandler) => {
         console.log("Session Description Handler hazır");
-        const peerConnection = session.sessionDescriptionHandler.peerConnection;
-  
-        // Track olayını dinle
-        peerConnection.addEventListener("track", (event) => {
+        const peerConnection = sessionDescriptionHandler?.peerConnection;
+
+        peerConnection?.addEventListener("track", (event: RTCTrackEvent) => {
           console.log("Track olayı:", event);
           if (event.track.kind === "audio") {
             const remoteStream = new MediaStream();
-            remoteStream.addTrack(event.track); // Uzaktaki ses akışını al
-            
+            remoteStream.addTrack(event.track);
+
             if (remoteAudioRef.current) {
-              remoteAudioRef.current.srcObject = remoteStream; // Ses akışını bağla
-              remoteAudioRef.current.play(); // Oynatmaya başla
+              remoteAudioRef.current.srcObject = remoteStream;
+              remoteAudioRef.current.play();
             }
           }
         });
       },
     };
-  
+
     setSession(session);
   };
 
@@ -194,13 +178,12 @@ const App = () => {
     }
   };
 
-  //Media select functions
+  // Cihaz seçme fonksiyonları
   useEffect(() => {
     const getDevices = async () => {
-      const deviceInfos = await navigator?.mediaDevices?.enumerateDevices();
+      const deviceInfos = await navigator.mediaDevices.enumerateDevices();
       setDevices(deviceInfos);
 
-      // Varsayılan mikrofon ve hoparlörü ayarla
       const microphones = deviceInfos.filter(
         (device) => device.kind === "audioinput"
       );
@@ -209,22 +192,22 @@ const App = () => {
       );
 
       if (microphones.length > 0) {
-        setSelectedMicrophone(microphones[0].deviceId); // İlk mikrofonu varsayılan olarak ayarla
+        setSelectedMicrophone(microphones[0].deviceId);
       }
 
       if (speakers.length > 0) {
-        setSelectedSpeaker(speakers[0].deviceId); // İlk hoparlörü varsayılan olarak ayarla
+        setSelectedSpeaker(speakers[0].deviceId);
       }
     };
 
     getDevices();
   }, []);
 
-  const handleMicrophoneChange = (event) => {
+  const handleMicrophoneChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     setSelectedMicrophone(event.target.value);
   };
 
-  const handleSpeakerChange = (event) => {
+  const handleSpeakerChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     setSelectedSpeaker(event.target.value);
   };
 
@@ -260,8 +243,8 @@ const App = () => {
           </>
         )}
         {/* Ses akışı */}
-        <audio ref={localAudioRef} autoPlay muted></audio> {/* Kendi sesi */}
-        <audio id="remote-audio" ref={remoteAudioRef} autoPlay></audio> {/* Karşı taraf sesi */}
+        <audio ref={localAudioRef} autoPlay muted></audio>
+        <audio ref={remoteAudioRef} autoPlay></audio>
       </div>
 
       <div>
@@ -279,13 +262,13 @@ const App = () => {
         </div>
 
         <div>
-          <h2>Hoperlör Seçin</h2>
+          <h2>Hoparlör Seçin</h2>
           <select onChange={handleSpeakerChange} value={selectedSpeaker}>
             {devices
               .filter((device) => device.kind === "audiooutput")
               .map((device) => (
                 <option key={device.deviceId} value={device.deviceId}>
-                  {device.label || `Hoperlör ${device.deviceId}`}
+                  {device.label || `Hoparlör ${device.deviceId}`}
                 </option>
               ))}
           </select>
@@ -294,7 +277,7 @@ const App = () => {
         <div>
           <h2>Seçilen Aygıtlar</h2>
           <p>Seçilen Mikrofon: {selectedMicrophone}</p>
-          <p>Seçilen Hoperlör: {selectedSpeaker}</p>
+          <p>Seçilen Hoparlör: {selectedSpeaker}</p>
         </div>
       </div>
     </div>
