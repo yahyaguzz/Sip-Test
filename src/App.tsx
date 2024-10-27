@@ -7,9 +7,11 @@ import {
   URI,
   Invitation,
   Session,
+  InviterOptions,
+  UserAgentOptions,
 } from "sip.js";
-import { AckableIncomingResponseWithSession, OutgoingInviteRequest } from "sip.js/lib/core";
-import { SessionDescriptionHandler } from "sip.js/lib/platform/web";
+import { AckableIncomingResponseWithSession, IncomingInviteRequest, IncomingResponse, OutgoingInviteRequest } from "sip.js/lib/core";
+import { SessionDescriptionHandler, TransportOptions } from "sip.js/lib/platform/web";
 
 // Cihaz türlerini tanımlamak için gerekli tipler
 type MediaDeviceInfo = {
@@ -44,17 +46,34 @@ const App: React.FC = () => {
       return;
     }
 
-    const transportOptions = {
+    const transportOptions: TransportOptions = {
       server: `wss://${wsServer}:${wsPort}${serverPath}`,
       traceSip: true,
     };
 
-    const userAgentOptions = {
-      uri: UserAgent.makeURI(`sip:${username}@${wsServer}`), // URI doğru şekilde oluşturuldu
+    const mediaStreamFactory = () => {
+      return navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: false
+      });
+    };
+
+    const userAgentOptions: UserAgentOptions = {
+      uri: UserAgent.makeURI(`sip:${username}@${wsServer}`),
       transportOptions,
       authorizationUsername: username,
       authorizationPassword: password,
       displayName: "Yahya Test",
+      sessionDescriptionHandlerFactory: (session: Session, options) => {
+        const sessionDescriptionHandlerConfiguration = {
+          iceGatheringTimeout: 5000, // ICE bağlantı kurulma süresi
+          peerConnectionConfiguration: {
+            iceServers: [{ urls: "stun:stun.l.google.com:19302" }] // ICE Sunucuları ayarlayabilirsin
+          }
+        };
+        const logger = session.userAgent.getLogger("sip.SessionDescriptionHandler");
+        return new SessionDescriptionHandler(logger, mediaStreamFactory, sessionDescriptionHandlerConfiguration);
+      }
     };
 
     const ua = new UserAgent(userAgentOptions);
@@ -72,14 +91,15 @@ const App: React.FC = () => {
         console.error("Register hata:", error);
       });
 
-    ua.delegate = {
-      onInvite(invitation: Invitation) {
-        invitation.accept().then((session) => {
-          console.log("Davet kabul edildi:", session);
-          handleSession(invitation);
-        });
-      },
-    };
+    // ua.delegate = {
+    //   onInvite(invitation: Invitation) {
+    //     invitation.accept({ sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } } }).then((response) => {
+    //       console.log("Davet kabul edildi:", response);
+    //       console.log("userAgentOptions sessionDescriptionHandlerFactory session.sessionDescriptionHandler", invitation.sessionDescriptionHandler)
+    //     });
+    //     handleSession(invitation);
+    //   },
+    // }
   };
 
   // Arama başlatma fonksiyonu
@@ -89,52 +109,52 @@ const App: React.FC = () => {
       const targetURI = new URI("sip", target, wsServer); // Hedef URI burada oluşturuldu
 
       try {
-        const mediaStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            deviceId: { exact: selectedMicrophone }, // Seçilen mikrofon deviceId'sini kullan
-          },
-        });
+        // const mediaStream = await navigator.mediaDevices.getUserMedia({
+        //   audio: {
+        //     deviceId: { exact: selectedSpeaker }, // Seçilen mikrofon deviceId'sini kullan
+        //   },
+        // });
 
-        if (localAudioRef.current) {
-          localAudioRef.current.srcObject = mediaStream; // Ses akışını yerel ses kaynağına bağla
-        }
+        // if (localAudioRef.current) {
+        //   localAudioRef.current.srcObject = mediaStream; // Ses akışını yerel ses kaynağına bağla
+        // }
 
-        const inviteOptions = {
+        const inviteOptions: InviterOptions = {
           sessionDescriptionHandlerOptions: {
-            constraints: { audio: true },
-            localMediaStream: mediaStream,
+            constraints: {
+              audio: true,
+              video: false,
+            },
+
           },
         };
 
-        const inviter = new Inviter(userAgent, targetURI, inviteOptions);
+        const inviter = new Inviter(userAgent, targetURI);
+
+        // inviter.delegate.onSessionDescriptionHandler({sessionDescriptionHandler: SessionDescriptionHandler, provisional: true})
 
         inviter
           .invite()
-          .then(({ delegate }: OutgoingInviteRequest) => {
+          .then(({ delegate, }: OutgoingInviteRequest) => {
             delegate = {
-              onAccept: (ackAbleSession: AckableIncomingResponseWithSession) => {
-                // if (
-                //   session &&
-                //   session?.sessionDescriptionHandler?.peerConnection
-                // ) {
-                //   const remoteStream =
-                //     session?.sessionDescriptionHandler?.peerConnection;
-                //   const audioElements = document.querySelectorAll("audio");
+              onAccept: ({ session, ack }: AckableIncomingResponseWithSession) => {
+                ack()
 
-                //   audioElements.forEach((audio) => {
-                //     audio.srcObject = remoteStream as unknown as MediaStream;
-                //   });
-                // }
-                // handleSession(ackAbleSession.session)
+                session.delegate = {
+                  onInvite: (request: IncomingInviteRequest) => {
+                    request.accept()
+                  },
+                };
+                //Invite onaylanıyor ve görüşme iki taraf için de tam anlamıyla başladığını doğruluyoruz
               },
 
             };
-
-
           })
           .catch((error: Error) => {
             console.error("Invite hata:", error);
           });
+        console.log("inviter._referred", inviter)
+        handleSession(inviter)
       } catch (error) {
         console.error("Media akışı alma hatası:", error);
       }
@@ -146,29 +166,85 @@ const App: React.FC = () => {
   // Oturum yönetimi (session) ve medya akışını ayarlama
   const handleSession = (session: Session) => {
     console.log("handleSession Session:", session);
+    const sessionDescriptionHandler: any = session.sessionDescriptionHandler;
+    console.log("handleSession sessionDescriptionHandler:", sessionDescriptionHandler.peerConnection)
+    const peerConnection = sessionDescriptionHandler?.peerConnection;
+    peerConnection?.getSenders().forEach((sender) => {
+      if (sender.track) {
+        sender.track.enabled = true;
+      }
+    });
 
-    session.delegate = {
-      onSessionDescriptionHandler: (sessionDescriptionHandler: SessionDescriptionHandler) => {
-        console.log("Session Description Handler hazır");
-        const peerConnection = sessionDescriptionHandler?.peerConnection;
+    peerConnection?.getReceivers().forEach((receiver) => {
+      if (receiver.track) {
+        receiver.track.enabled = true;
+      }
+    });
 
-        peerConnection?.addEventListener("track", (event: RTCTrackEvent) => {
-          console.log("Track olayı:", event);
-          if (event.track.kind === "audio") {
-            const remoteStream = new MediaStream();
-            remoteStream.addTrack(event.track);
+    // Remote SDP'nin var olup olmadığını kontrol et
+    const remoteSDH = peerConnection?.currentRemoteDescription;
 
-            if (remoteAudioRef.current) {
-              remoteAudioRef.current.srcObject = remoteStream;
-              remoteAudioRef.current.play();
-            }
-          }
-        });
-      },
-    };
+    console.log("Karşıdan gelen SDP:", remoteSDH);
+
+    peerConnection?.addEventListener("track", (event) => {
+      if (event.track.kind === "audio") {
+        if (remoteAudioRef.current) {
+          remoteAudioRef.current.srcObject = event.streams[0];
+          remoteAudioRef.current.play().catch((error) => console.log("Play hatası:", error));
+        }
+      }
+    });
+    // session.delegate = {
+    //   onSessionDescriptionHandler: (sessionDescriptionHandler: SessionDescriptionHandler) => {
+    //     const peerConnection = sessionDescriptionHandler?.peerConnection;
+    //     console.log("Peer Connection kurulmuş durumda:", peerConnection);
+
+    //     // Giden medya akışı için track'leri etkinleştir
+    //     peerConnection?.getSenders().forEach((sender) => {
+    //       if (sender.track) {
+    //         sender.track.enabled = true;
+    //       }
+    //     });
+
+    //     peerConnection?.getReceivers().forEach((receiver) => {
+    //       if (receiver.track) {
+    //         receiver.track.enabled = true;
+    //       }
+    //     });
+
+    //     // Remote SDP'nin var olup olmadığını kontrol et
+    //     const remoteSDH = peerConnection?.currentRemoteDescription;
+
+    //     console.log("Karşıdan gelen SDP:", remoteSDH);
+
+    //     peerConnection?.addEventListener("track", (event) => {
+    //       if (event.track.kind === "audio") {
+    //         if (remoteAudioRef.current) {
+    //           remoteAudioRef.current.srcObject = event.streams[0];
+    //           remoteAudioRef.current.play().catch((error) => console.log("Play hatası:", error));
+    //         }
+    //       }
+    //     });
+    //     // Gelen medya akışını ayarla
+    //     // peerConnection?.addEventListener("track", (event: RTCTrackEvent) => {
+    //     //   console.log("Track olayı:", event);
+    //     //   if (event.track.kind === "audio") {
+    //     //     // Yeni bir medya akışı oluştur ve sesi bağla
+    //     //     const remoteStream = new MediaStream();
+    //     //     remoteStream.addTrack(event.track);
+
+    //     //     if (remoteAudioRef.current) {
+    //     //       remoteAudioRef.current.srcObject = remoteStream;
+    //     //       remoteAudioRef.current.play();
+    //     //     }
+    //     //   }
+    //     // });
+    //   },
+    // };
 
     setSession(session);
   };
+
 
   // Çağrı sonlandırma fonksiyonu
   const handleHangup = () => {
