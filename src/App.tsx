@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   UserAgent,
   Registerer,
@@ -12,7 +12,7 @@ import {
 } from "sip.js";
 import { AckableIncomingResponseWithSession, IncomingInviteRequest, IncomingResponse, OutgoingInviteRequest } from "sip.js/lib/core";
 import { SessionDescriptionHandler, SessionDescriptionHandlerConfiguration, TransportOptions } from "sip.js/lib/platform/web";
-import { handleTerminate } from "./services/sip/sipService";
+import sipService, { call } from "./services/sip/sipService";
 
 // Cihaz türlerini tanımlamak için gerekli tipler
 type MediaDeviceInfo = {
@@ -41,6 +41,9 @@ const App: React.FC = () => {
   const serverPath = "/ws"; // SIP Server Path
   const wsPort = 8089; // SIP Server Port
 
+
+  const handleSession = useMemo(() => sipService(session, remoteAudioRef.current), [session, remoteAudioRef.current])
+  console.log("Session State Yeni:", handleSession.sessionState)
   // SIP UserAgent ve Registerer kurulum
   const handleRegister = () => {
     if (!username || !password) {
@@ -48,7 +51,7 @@ const App: React.FC = () => {
       return;
     }
 
-    const transportOptions: TransportOptions = {
+    const transportOptions = {
       server: `wss://${wsServer}:${wsPort}${serverPath}`,
       traceSip: true,
     };
@@ -109,200 +112,32 @@ const App: React.FC = () => {
     }
   };
 
+  const handleHangup = () => {
+    handleSession?.terminate()
+    setSession(null)
+  }
+
   // Arama başlatma fonksiyonu
   const handleCall = async () => {
-    if (userAgent && registered) {
-      console.log("Arama if içinde başladı");
-      const targetURI = new URI("sip", target, wsServer); // Hedef URI burada oluşturuldu
-
-      try {
-        // const mediaStream = await navigator.mediaDevices.getUserMedia({
-        //   audio: {
-        //     deviceId: { exact: selectedSpeaker }, // Seçilen mikrofon deviceId'sini kullan
-        //   },
-        // });
-
-        // if (localAudioRef.current) {
-        //   localAudioRef.current.srcObject = mediaStream; // Ses akışını yerel ses kaynağına bağla
-        // }
-
-        const inviterOptions: InviterOptions = {
-          sessionDescriptionHandlerOptions: {
-            constraints: {
-              audio: true,
-              video: false,
-            },
-
-          },
-          earlyMedia: true,
-        };
-
-        const inviter = new Inviter(userAgent, targetURI, inviterOptions);
-
-        // inviter.delegate.onSessionDescriptionHandler({sessionDescriptionHandler: SessionDescriptionHandler, provisional: true})
-
-        inviter
-          .invite()
-          .then(({ delegate, }: OutgoingInviteRequest) => {
-            // delegate = {
-            //   onAccept: ({ session, ack }: AckableIncomingResponseWithSession) => {
-            //     ack()
-
-            //     session.delegate = {
-            //       onInvite: (request: IncomingInviteRequest) => {
-            //         request.accept()
-            //       },
-            //     };
-            //     //Invite onaylanıyor ve görüşme iki taraf için de tam anlamıyla başladığını doğruluyoruz
-            //   },
-
-            // };
-          })
-          .catch((error: Error) => {
-            console.error("Invite hata:", error);
-          });
-        console.log("inviter._referred", inviter)
-        handleSession(inviter)
-      } catch (error) {
-        console.error("Media akışı alma hatası:", error);
-      }
-    } else {
-      console.error("UserAgent ya da kayıtlı değil!");
+    const newSession = await call(userAgent, registered, target)
+    console.log("newSession", newSession)
+    if (newSession) {
+      setSession(newSession);
     }
   };
 
   // Oturum yönetimi (session) ve medya akışını ayarlama
-  const handleSession = async (session: Session) => {
-    session.delegate = {
-      async onBye(bye) {
-        await bye.accept();
-        console.log("onBye calisti")
-        setSession(null)
-      },
-      onCancel(cancel) {
-        setSession(null)
-      },
-      // onStateChange() {
-      //   console.log("Session state changed:", session.state);
-      //   // Oturum durumunu güncelleyin
-      //   setSession(session);
-      // },
-    }
-
-    // session.stateChange.addListener((newState) => {
-    //   console.log("Oturum durumu değişti:", newState);
-    //   setSessionState(newState); // Durum değiştiğinde state'i güncelleyin
-    // });
+  const handleSessionOld = async (session: Session) => {
 
 
-    console.log("handleSession Session:", session);
 
-    const sessionDescriptionHandler: any = session.sessionDescriptionHandler;
-    console.log("handleSession sessionDescriptionHandler:", sessionDescriptionHandler.peerConnection)
-    const peerConnection: RTCPeerConnection = sessionDescriptionHandler?.peerConnection;
-    peerConnection?.getSenders().forEach((sender: RTCRtpSender) => {
-      if (sender.track) {
-        sender.track.enabled = true;
-      }
-    });
-
-    peerConnection?.getReceivers().forEach((receiver: RTCRtpReceiver) => {
-      if (receiver.track) {
-        receiver.track.enabled = true;
-      }
-    });
-
-    // Remote SDP'nin var olup olmadığını kontrol et
-    const remoteSDH = peerConnection?.currentRemoteDescription;
-
-    console.log("Karşıdan gelen SDH:", remoteSDH);
-
-    const newStream = await navigator.mediaDevices.getUserMedia({
-      audio: { deviceId: { exact: selectedMicrophone } },
-    });
-
-    if (localAudioRef.current) {
-      localAudioRef.current.srcObject = newStream;
-      await localAudioRef.current.play().catch((error) => console.error("handleSession Yerel ses oynatma hatası:", error));
-    }
-
-    const newTrack = newStream.getAudioTracks()[0];
-    const sender = peerConnection.getSenders().find((s: RTCRtpSender) => s.track?.kind === "audio");
-
-    if (sender && newTrack) {
-      sender.replaceTrack(newTrack);
-    }
-
-    peerConnection?.addEventListener("track", (event) => {
-      if (event.track.kind === "audio") {
-        if (remoteAudioRef.current) {
-          remoteAudioRef.current.srcObject = event.streams[0];
-          remoteAudioRef.current.play().catch((error) => console.log("Play hatası:", error));
-        }
-      }
-    });
-
-    setSession(session);
-
-
-    // session.delegate = {
-    //   onSessionDescriptionHandler: (sessionDescriptionHandler: SessionDescriptionHandler) => {
-    //     const peerConnection = sessionDescriptionHandler?.peerConnection;
-    //     console.log("Peer Connection kurulmuş durumda:", peerConnection);
-
-    //     // Giden medya akışı için track'leri etkinleştir
-    //     peerConnection?.getSenders().forEach((sender) => {
-    //       if (sender.track) {
-    //         sender.track.enabled = true;
-    //       }
-    //     });
-
-    //     peerConnection?.getReceivers().forEach((receiver) => {
-    //       if (receiver.track) {
-    //         receiver.track.enabled = true;
-    //       }
-    //     });
-
-    //     // Remote SDP'nin var olup olmadığını kontrol et
-    //     const remoteSDH = peerConnection?.currentRemoteDescription;
-
-    //     console.log("Karşıdan gelen SDP:", remoteSDH);
-
-    //     peerConnection?.addEventListener("track", (event) => {
-    //       if (event.track.kind === "audio") {
-    //         if (remoteAudioRef.current) {
-    //           remoteAudioRef.current.srcObject = event.streams[0];
-    //           remoteAudioRef.current.play().catch((error) => console.log("Play hatası:", error));
-    //         }
-    //       }
-    //     });
-    //     // Gelen medya akışını ayarla
-    //     // peerConnection?.addEventListener("track", (event: RTCTrackEvent) => {
-    //     //   console.log("Track olayı:", event);
-    //     //   if (event.track.kind === "audio") {
-    //     //     // Yeni bir medya akışı oluştur ve sesi bağla
-    //     //     const remoteStream = new MediaStream();
-    //     //     remoteStream.addTrack(event.track);
-
-    //     //     if (remoteAudioRef.current) {
-    //     //       remoteAudioRef.current.srcObject = remoteStream;
-    //     //       remoteAudioRef.current.play();
-    //     //     }
-    //     //   }
-    //     // });
-    //   },
-    // };
   };
-  useEffect(() => {
-    const stateChangeListener = (newState: SessionState) => {
-      setSessionState(newState);
-    };
-    session?.stateChange.addListener(stateChangeListener);
 
-    return () => {
-      session?.stateChange.removeListener(stateChangeListener);
-    };
-  }, [session]);
+  useEffect(() => {
+
+    setSessionState(handleSession?.sessionState || SessionState.Initial);
+    console.log("State Güncellendi: ",handleSession.sessionState)
+  }, [handleSession.sessionState]);
 
   // Cihaz seçme fonksiyonları
   const getDevices = async () => {
@@ -346,36 +181,10 @@ const App: React.FC = () => {
   const handleMicrophoneChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
     const newDeviceId = event.target.value;
 
-    if (session) {
-      const sessionDescriptionHandler: any = session.sessionDescriptionHandler;
-      const peerConnection = sessionDescriptionHandler.peerConnection;
+    handleSession.changeMicrophone(newDeviceId)
 
-      try {
-        // Yeni mikrofon cihazıyla medya akışını al
-        const newStream = await navigator.mediaDevices.getUserMedia({
-          audio: { deviceId: { exact: newDeviceId } },
-        });
+    setSelectedMicrophone(newDeviceId)
 
-        // Yeni ses akışını `localAudioRef`'e bağla
-        if (localAudioRef.current) {
-          localAudioRef.current.srcObject = newStream;
-          await localAudioRef.current.play().catch((error) => console.error("Yerel ses oynatma hatası:", error));
-        }
-
-        // `peerConnection` sender ile yeni track'i ekle
-        const newTrack = newStream.getAudioTracks()[0];
-        const sender = peerConnection.getSenders().find((s: RTCRtpSender) => s.track?.kind === "audio");
-
-        if (sender && newTrack) {
-          await sender.replaceTrack(newTrack);
-        }
-        setSelectedMicrophone(newDeviceId)
-      } catch (error) {
-        console.error("Mikrofon değiştirme hatası:", error);
-      }
-    } else {
-      console.error("handleMicrophoneChange: Session bulunamadı");
-    }
   };
 
 
@@ -391,7 +200,6 @@ const App: React.FC = () => {
     }
     setSelectedSpeaker(newDeviceId);
   };
-  console.log("SessionState", session?.state)
 
   return (
     <div>
@@ -421,7 +229,7 @@ const App: React.FC = () => {
               onChange={(e) => setTarget(e.target.value)}
             />
             <button onClick={handleCall}>Call</button>
-            <button onClick={(() => { handleTerminate(session, sessionState) })}>Hangup</button>
+            <button onClick={handleHangup}>Hangup</button>
           </>
         )}
         {/* Ses akışı */}
