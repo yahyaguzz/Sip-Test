@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   Invitation,
   Inviter,
@@ -6,8 +7,8 @@ import {
   SessionState,
   UserAgent,
 } from "sip.js";
-import { OutgoingInviteRequest, URI } from "sip.js/lib/core";
-const wsServer = "liwewireelectrical.site"; // SIP Server
+import { URI } from "sip.js/lib/core";
+const wsServer = "liwewireelectrical.site";
 
 function handleSession(
   session: Session | null,
@@ -59,14 +60,14 @@ function handleSession(
   const enableReceiverTracks = (enable: boolean) => {
     peerConnection?.getReceivers().forEach((receiver: RTCRtpReceiver) => {
       if (receiver.track) {
-        receiver.track.enabled = true;
+        receiver.track.enabled = enable;
       }
     });
   };
+
   const changeMicrophone = async (deviceId: string) => {
     if (session) {
       try {
-        // Yeni mikrofon cihazıyla medya akışını al
         const newStream = await navigator.mediaDevices.getUserMedia({
           audio: { deviceId: { exact: deviceId } },
         });
@@ -87,7 +88,17 @@ function handleSession(
     }
   };
 
-  const setSpeakerStream = () => {
+  const changeSpeaker = (deviceId: string) => {
+    if (speaker && speaker.setSinkId) {
+      speaker.setSinkId(deviceId).catch((error) => {
+        console.error("Hoparlör değiştirilemedi:", error);
+      });
+    } else {
+      console.warn("Tarayıcınız setSinkId() fonksiyonunu desteklemiyor.");
+    }
+  };
+
+  const startSpeakerStream = () => {
     peerConnection?.addEventListener("track", (event) => {
       if (event.track.kind === "audio") {
         if (speaker) {
@@ -116,30 +127,30 @@ function handleSession(
         } else {
           throw new Error("terminate Unknown session type.");
         }
+        break;
       case SessionState.Establishing:
         if (session instanceof Inviter) {
           await session.cancel().then(() => {
             console.log(`terminate Inviter canceled (sent CANCEL)`);
           });
         } else if (session instanceof Invitation) {
-          session.reject().then(() => {
+          await session.reject().then(() => {
             console.log(`terminate Invitation rejected (sent 480)`);
           });
         } else {
           throw new Error("terminate Unknown session type.");
         }
+        break;
       case SessionState.Established:
         await session.bye().then(() => {
-          console.log(`terminate Session ended (sent BYE)`);
+          console.log(`terminate Session ended (sent BYE in Established)`);
         });
-
+        break;
       case SessionState.Terminating:
         console.log("terminate", sessionState);
-
         break;
       case SessionState.Terminated:
         console.log("terminated", sessionState);
-
         break;
       default:
         throw new Error("Unknown state");
@@ -149,11 +160,13 @@ function handleSession(
   //Enable mic and speaker
   enableSenderTracks(true);
   enableReceiverTracks(true);
-  setSpeakerStream();
+  startSpeakerStream();
+
   return {
     sessionState,
     changeMicrophone,
     terminate,
+    changeSpeaker,
   };
 }
 
@@ -163,7 +176,7 @@ export const call = async (
   target: string
 ): Promise<Inviter | void> => {
   if (userAgent && registered) {
-    const targetURI = new URI("sip", target, wsServer); // Hedef URI burada oluşturuldu
+    const targetURI = new URI("sip", target, wsServer);
     const inviterOptions: InviterOptions = {
       sessionDescriptionHandlerOptions: {
         constraints: {
@@ -179,7 +192,7 @@ export const call = async (
 
       inviter
         .invite()
-        .then(({ delegate }: OutgoingInviteRequest) => {
+        .then(() => {
           console.log("inviter.invite() Başarılı");
         })
         .catch((error: Error) => {
@@ -192,6 +205,28 @@ export const call = async (
   } else {
     console.error("inviter.invite() UserAgent ya da kayıtlı değil!");
   }
+};
+
+export const useSessionState = (session: Session | null) => {
+  const [sessionState, setSessionState] = useState<SessionState>(
+    SessionState.Initial
+  );
+
+  useEffect(() => {
+    if (!session) return;
+
+    const handleStateChange = (newState: SessionState) => {
+      setSessionState(newState);
+    };
+
+    session.stateChange.addListener(handleStateChange);
+
+    return () => {
+      session.stateChange.removeListener(handleStateChange);
+    };
+  }, [session]);
+
+  return sessionState;
 };
 
 export default handleSession;

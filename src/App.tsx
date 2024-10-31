@@ -2,17 +2,11 @@ import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   UserAgent,
   Registerer,
-  Inviter,
   SessionState,
-  URI,
-  Invitation,
   Session,
-  InviterOptions,
   UserAgentOptions,
 } from "sip.js";
-import { AckableIncomingResponseWithSession, IncomingInviteRequest, IncomingResponse, OutgoingInviteRequest } from "sip.js/lib/core";
-import { SessionDescriptionHandler, SessionDescriptionHandlerConfiguration, TransportOptions } from "sip.js/lib/platform/web";
-import sipService, { call } from "./services/sip/sipService";
+import sipService, { call, useSessionState } from "./services/sip/sipService";
 
 // Cihaz türlerini tanımlamak için gerekli tipler
 type MediaDeviceInfo = {
@@ -22,29 +16,81 @@ type MediaDeviceInfo = {
 };
 
 const App: React.FC = () => {
-  // media devices states
-  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  // media audioDevices states
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedMicrophone, setSelectedMicrophone] = useState<string>("");
   const [selectedSpeaker, setSelectedSpeaker] = useState<string>("");
 
   const [userAgent, setUserAgent] = useState<UserAgent | null>(null);
   const [registered, setRegistered] = useState<boolean>(false);
   const [session, setSession] = useState<Session | null>(null);
-  const [sessionState, setSessionState] = useState<SessionState>(SessionState.Initial);
   const [target, setTarget] = useState<string>("905418733299");
   const localAudioRef = useRef<HTMLAudioElement>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const [username, setUsername] = useState<string>("2000");
   const [password, setPassword] = useState<string>("W3$7Tr^j@");
 
-  const wsServer = "liwewireelectrical.site"; // SIP Server
-  const serverPath = "/ws"; // SIP Server Path
-  const wsPort = 8089; // SIP Server Port
+  const wsServer = "liwewireelectrical.site";
+  const serverPath = "/ws";
+  const wsPort = 8089;
 
-
+  const sessionState = useSessionState(session);
   const handleSession = useMemo(() => sipService(session, remoteAudioRef.current), [session, remoteAudioRef.current])
-  console.log("Session State Yeni:", handleSession.sessionState)
-  // SIP UserAgent ve Registerer kurulum
+
+  console.log("Session State Yeni:", sessionState)
+
+  const getAudioDevices = async () => {
+    const deviceInfos = await navigator.mediaDevices.enumerateDevices();
+    setAudioDevices(deviceInfos);
+
+    const microphones = deviceInfos.filter(
+      (device) => device.kind === "audioinput"
+    );
+    const speakers = deviceInfos.filter(
+      (device) => device.kind === "audiooutput"
+    );
+
+    if (microphones.length > 0) {
+      setSelectedMicrophone(microphones[0].deviceId);
+    }
+
+    if (speakers.length > 0) {
+      setSelectedSpeaker(speakers[0].deviceId);
+    }
+  };
+
+  useEffect(() => {
+
+    getAudioDevices();
+
+    const handleDeviceChange = async () => {
+      await getAudioDevices();
+      await handleMicrophoneChange({ target: { value: selectedMicrophone } } as React.ChangeEvent<HTMLSelectElement>);
+      handleSpeakerChange({ target: { value: selectedSpeaker } } as React.ChangeEvent<HTMLSelectElement>);
+    };
+
+    navigator.mediaDevices.ondevicechange = handleDeviceChange;
+
+    return () => {
+      navigator.mediaDevices.ondevicechange = null;
+    };
+  }, []);
+
+  const handleMicrophoneChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const newDeviceId = event.target.value;
+
+    session && await handleSession.changeMicrophone(newDeviceId)
+    setSelectedMicrophone(newDeviceId)
+  };
+
+
+  const handleSpeakerChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const newDeviceId = event.target.value;
+
+    session && handleSession.changeSpeaker(newDeviceId)
+    setSelectedSpeaker(newDeviceId);
+  };
+
   const handleRegister = () => {
     if (!username || !password) {
       console.error("Username and password are required!");
@@ -56,30 +102,12 @@ const App: React.FC = () => {
       traceSip: true,
     };
 
-    // const mediaStreamFactory = () => {
-    //   return navigator.mediaDevices.getUserMedia({
-    //     audio: true,
-    //     video: false
-    //   });
-    // };
-
     const userAgentOptions: UserAgentOptions = {
       uri: UserAgent.makeURI(`sip:${username}@${wsServer}`),
       transportOptions,
       authorizationUsername: username,
       authorizationPassword: password,
       displayName: "Yahya Test",
-      //Burayı kaldırdığımızda da çalışıyor
-      // sessionDescriptionHandlerFactory: (session: Session, options) => {
-      //   const sessionDescriptionHandlerConfiguration: SessionDescriptionHandlerConfiguration = {
-      //     iceGatheringTimeout: 0,
-      //     peerConnectionConfiguration: {
-      //       iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
-      //     },
-      //   };
-      //   const logger = session.userAgent.getLogger("sip.SessionDescriptionHandler");
-      //   return new SessionDescriptionHandler(logger, mediaStreamFactory, sessionDescriptionHandlerConfiguration);
-      // },
     };
 
     const ua = new UserAgent(userAgentOptions);
@@ -108,16 +136,15 @@ const App: React.FC = () => {
       onDisconnect(error) {
         console.log("ua.delegate onDisconnect calisti")
         setSession(null)
+        setUserAgent(null)
       },
     }
   };
 
-  const handleHangup = () => {
-    handleSession?.terminate()
-    setSession(null)
+  const handleHangup = async () => {
+    await handleSession?.terminate()
   }
 
-  // Arama başlatma fonksiyonu
   const handleCall = async () => {
     const newSession = await call(userAgent, registered, target)
     console.log("newSession", newSession)
@@ -126,80 +153,15 @@ const App: React.FC = () => {
     }
   };
 
-  // Oturum yönetimi (session) ve medya akışını ayarlama
-  const handleSessionOld = async (session: Session) => {
-
-
-
-  };
-
   useEffect(() => {
-
-    setSessionState(handleSession?.sessionState || SessionState.Initial);
-    console.log("State Güncellendi: ",handleSession.sessionState)
-  }, [handleSession.sessionState]);
-
-  // Cihaz seçme fonksiyonları
-  const getDevices = async () => {
-    const deviceInfos = await navigator.mediaDevices.enumerateDevices();
-    setDevices(deviceInfos);
-
-    const microphones = deviceInfos.filter(
-      (device) => device.kind === "audioinput"
-    );
-    const speakers = deviceInfos.filter(
-      (device) => device.kind === "audiooutput"
-    );
-
-    if (microphones.length > 0) {
-      setSelectedMicrophone(microphones[0].deviceId);
+    switch (sessionState) {
+      case SessionState.Terminated:
+        setSession(null)
+        break;
+      default:
+        break;
     }
-
-    if (speakers.length > 0) {
-      setSelectedSpeaker(speakers[0].deviceId);
-    }
-  };
-
-  useEffect(() => {
-    // Başlangıçta cihazları al
-    getDevices();
-
-    // Cihaz değişikliklerini dinle
-    const handleDeviceChange = async () => {
-      await handleMicrophoneChange({ target: { value: selectedMicrophone } } as React.ChangeEvent<HTMLSelectElement>);
-      await getDevices();
-    };
-
-    navigator.mediaDevices.ondevicechange = handleDeviceChange;
-
-    // Temizlik fonksiyonu
-    return () => {
-      navigator.mediaDevices.ondevicechange = null;
-    };
-  }, []);
-
-  const handleMicrophoneChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
-    const newDeviceId = event.target.value;
-
-    handleSession.changeMicrophone(newDeviceId)
-
-    setSelectedMicrophone(newDeviceId)
-
-  };
-
-
-  const handleSpeakerChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    const newDeviceId = event.target.value;
-
-    if (remoteAudioRef.current && remoteAudioRef.current.setSinkId) {
-      remoteAudioRef.current.setSinkId(newDeviceId).catch((error) => {
-        console.error("Hoparlör değiştirilemedi:", error);
-      });
-    } else {
-      console.warn("Tarayıcınız setSinkId() fonksiyonunu desteklemiyor.");
-    }
-    setSelectedSpeaker(newDeviceId);
-  };
+  }, [sessionState])
 
   return (
     <div>
@@ -229,7 +191,7 @@ const App: React.FC = () => {
               onChange={(e) => setTarget(e.target.value)}
             />
             <button onClick={handleCall}>Call</button>
-            <button onClick={handleHangup}>Hangup</button>
+            {session && <button onClick={handleHangup}>Hangup</button>}
           </>
         )}
         {/* Ses akışı */}
@@ -241,7 +203,7 @@ const App: React.FC = () => {
         <div>
           <h2>Mikrofon Seçin</h2>
           <select onChange={handleMicrophoneChange} value={selectedMicrophone}>
-            {devices
+            {audioDevices
               .filter((device) => device.kind === "audioinput")
               .map((device) => (
                 <option key={device.deviceId} value={device.deviceId}>
@@ -254,7 +216,7 @@ const App: React.FC = () => {
         <div>
           <h2>Hoparlör Seçin</h2>
           <select onChange={handleSpeakerChange} value={selectedSpeaker}>
-            {devices
+            {audioDevices
               .filter((device) => device.kind === "audiooutput")
               .map((device) => (
                 <option key={device.deviceId} value={device.deviceId}>
