@@ -7,6 +7,7 @@ import {
   UserAgentOptions,
 } from "sip.js";
 import sipService, { call, useSessionState } from "./services/sip/sipService";
+import { TransportOptions } from "sip.js/lib/platform/web";
 
 // Cihaz türlerini tanımlamak için gerekli tipler
 type MediaDeviceInfo = {
@@ -24,7 +25,7 @@ const App: React.FC = () => {
   const [userAgent, setUserAgent] = useState<UserAgent | null>(null);
   const [registered, setRegistered] = useState<boolean>(false);
   const [session, setSession] = useState<Session | null>(null);
-  const [target, setTarget] = useState<string>("905418733299");
+  const [target, setTarget] = useState<string>("");
   const localAudioRef = useRef<HTMLAudioElement>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const [username, setUsername] = useState<string>("2000");
@@ -91,68 +92,6 @@ const App: React.FC = () => {
     setSelectedSpeaker(newDeviceId);
   };
 
-  const handleRegister = () => {
-    if (!username || !password) {
-      console.error("Username and password are required!");
-      return;
-    }
-
-    const transportOptions = {
-      server: `wss://${wsServer}:${wsPort}${serverPath}`,
-      traceSip: true,
-    };
-
-    const userAgentOptions: UserAgentOptions = {
-      uri: UserAgent.makeURI(`sip:${username}@${wsServer}`),
-      transportOptions,
-      authorizationUsername: username,
-      authorizationPassword: password,
-      displayName: "Yahya Test",
-    };
-
-    const ua = new UserAgent(userAgentOptions);
-    console.log("UserAgent oluşturuldu:", ua);
-
-    ua.start()
-      .then(() => {
-        const registerer = new Registerer(ua);
-        registerer.register();
-        setRegistered(true);
-        setUserAgent(ua);
-        console.log("Kullanıcı register oldu!");
-      })
-      .catch((error: Error) => {
-        console.error("Register hata:", error);
-      });
-
-    ua.delegate = {
-      // onInvite(invitation: Invitation) {
-      //   invitation.accept({ sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } } }).then((response) => {
-      //     console.log("Davet kabul edildi:", response);
-      //     console.log("userAgentOptions sessionDescriptionHandlerFactory session.sessionDescriptionHandler", invitation.sessionDescriptionHandler)
-      //   });
-      //   handleSession(invitation);
-      // },
-      onDisconnect(error) {
-        console.log("ua.delegate onDisconnect calisti")
-        setSession(null)
-        setUserAgent(null)
-      },
-    }
-  };
-
-  const handleHangup = async () => {
-    await handleSession?.terminate()
-  }
-
-  const handleCall = async () => {
-    const newSession = await call(userAgent, registered, target)
-    console.log("newSession", newSession)
-    if (newSession) {
-      setSession(newSession);
-    }
-  };
-
   useEffect(() => {
     switch (sessionState) {
       case SessionState.Terminated:
@@ -163,23 +102,102 @@ const App: React.FC = () => {
     }
   }, [sessionState])
 
+  const transportOptions: TransportOptions = {
+    server: `wss://${wsServer}:${wsPort}${serverPath}`,
+    traceSip: true,
+  };
+
+  const userAgentOptions: UserAgentOptions = {
+    uri: UserAgent.makeURI(`sip:${username}@${wsServer}`),
+    transportOptions,
+    authorizationUsername: username,
+    authorizationPassword: password,
+    displayName: username,
+    logBuiltinEnabled: true,
+    logLevel: "debug",
+    delegate: {
+      onInvite(invitation) {
+        console.log("Yeni arama geldi:", invitation);
+
+        invitation.accept({
+          sessionDescriptionHandlerOptions: {
+            constraints: { audio: true, video: false },
+          }
+        }).then((response) => {
+          console.log("Arama kabul edildi:", response);
+          setSession(invitation);
+        }).catch((error) => {
+          console.error("Arama kabul edilemedi:", error);
+        });
+      },
+      onConnect() {
+        console.log("Connect oldu")
+      },
+    }
+  };
+
+  const handleRegister = async () => {
+    if (!username || !password) {
+      console.error("Username and password are required!");
+      return;
+    }
+
+    const ua = new UserAgent(userAgentOptions);
+    console.log("UserAgent oluşturuldu:", ua);
+    ua.start()
+      .then(() => {
+        const registerer = new Registerer(ua);
+        registerer.register().then((response) => {
+          console.log("handleRegister Kayıt başarılı:", response);
+        }).catch((error) => {
+          console.log("Kayıt başarısız hata:", error);
+        });
+        setRegistered(true);
+        setUserAgent(ua);
+        console.log("Kullanıcı kayıt oldu!");
+      })
+      .catch((error: Error) => {
+        console.error("Register hata:", error);
+      });
+  };
+
+  const handleHangup = async () => {
+    await handleSession?.terminate()
+  }
+
+  const handleCall = async () => {
+    const newSession = await call(userAgent, registered, target)
+    console.log("newSession:", newSession)
+    if (newSession) {
+      setSession(newSession);
+    }
+  };
+
   return (
     <div>
       <div>
         <h2>SIP.js WebRTC Client</h2>
         {/* Register */}
-        <input
+        <select value={username} onChange={(e) => setUsername(e.target.value)}>
+          <option value="2000" defaultChecked>2000</option>
+          <option value="2001">2001</option>
+        </select>
+        <select value={password} onChange={(e) => setPassword(e.target.value)}>
+          <option value="W3$7Tr^j@" defaultChecked>2000 password</option>
+          <option value="FpxT6718*">2001 password</option>
+        </select>
+        {/* <input
           type="text"
           placeholder="Username"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
         />
         <input
-          type="password"
+          type="text"
           placeholder="Password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-        />
+        /> */}
         <button onClick={handleRegister}>Register</button>
         {/* Arama Yapma */}
         {registered && (
