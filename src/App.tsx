@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import {
   UserAgent,
   Registerer,
@@ -40,7 +40,18 @@ const App: React.FC = () => {
 
   console.log("Session State Yeni:", sessionState)
 
+  const checkPermissions = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log("Mikrofon izni alındı.");
+      stream.getTracks().forEach(track => track.stop());
+    } catch (err) {
+      console.error("Mikrofon izni reddedildi veya bir hata oluştu:", err);
+    }
+  };
+
   const getAudioDevices = async () => {
+
     const deviceInfos = await navigator.mediaDevices.enumerateDevices();
     setAudioDevices(deviceInfos);
 
@@ -60,15 +71,17 @@ const App: React.FC = () => {
     }
   };
 
+  const handleDeviceChange = useCallback(async () => {
+    await getAudioDevices();
+    await handleMicrophoneChange({ target: { value: selectedMicrophone } } as React.ChangeEvent<HTMLSelectElement>);
+    handleSpeakerChange({ target: { value: selectedSpeaker } } as React.ChangeEvent<HTMLSelectElement>);
+  }, [selectedMicrophone, selectedSpeaker])
+
   useEffect(() => {
+    checkPermissions()
 
     getAudioDevices();
 
-    const handleDeviceChange = async () => {
-      await getAudioDevices();
-      await handleMicrophoneChange({ target: { value: selectedMicrophone } } as React.ChangeEvent<HTMLSelectElement>);
-      handleSpeakerChange({ target: { value: selectedSpeaker } } as React.ChangeEvent<HTMLSelectElement>);
-    };
 
     navigator.mediaDevices.ondevicechange = handleDeviceChange;
 
@@ -76,6 +89,7 @@ const App: React.FC = () => {
       navigator.mediaDevices.ondevicechange = null;
     };
   }, []);
+
 
   const handleMicrophoneChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
     const newDeviceId = event.target.value;
@@ -218,6 +232,7 @@ const App: React.FC = () => {
       </div>
 
       <div>
+        <button onClick={getAudioDevices}>Cihazları Yenile</button>
         <div>
           <h2>Mikrofon Seçin</h2>
           <select onChange={handleMicrophoneChange} value={selectedMicrophone}>
