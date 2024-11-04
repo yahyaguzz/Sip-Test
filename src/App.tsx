@@ -40,7 +40,7 @@ const App: React.FC = () => {
 
   console.log("Session State Yeni:", sessionState)
 
-  const checkPermissions = async () => {
+  const checkAudioPermissions = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       console.log("Mikrofon izni alındı.");
@@ -78,7 +78,7 @@ const App: React.FC = () => {
   }, [selectedMicrophone, selectedSpeaker])
 
   useEffect(() => {
-    checkPermissions()
+    checkAudioPermissions()
 
     getAudioDevices();
 
@@ -232,7 +232,13 @@ const App: React.FC = () => {
       </div>
 
       <div>
-        <button onClick={getAudioDevices}>Cihazları Yenile</button>
+        <button onClick={
+          () => {
+            checkAudioPermissions()
+            getAudioDevices()
+          }}>
+          Cihazları Yenile
+        </button>
         <div>
           <h2>Mikrofon Seçin</h2>
           <select onChange={handleMicrophoneChange} value={selectedMicrophone}>
