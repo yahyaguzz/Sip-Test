@@ -5,9 +5,11 @@ import {
   SessionState,
   Session,
   UserAgentOptions,
+  Invitation,
 } from "sip.js";
-import sipService, { call, useSessionState } from "./services/sip/sipService";
+import sipService, { call } from "./services/sip/sipService";
 import { TransportOptions } from "sip.js/lib/platform/web";
+import handleSession from "./services/sip/sipService";
 
 // Cihaz türlerini tanımlamak için gerekli tipler
 type MediaDeviceInfo = {
@@ -17,6 +19,7 @@ type MediaDeviceInfo = {
 };
 
 const App: React.FC = () => {
+
   // media audioDevices states
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedMicrophone, setSelectedMicrophone] = useState<string>("");
@@ -25,6 +28,7 @@ const App: React.FC = () => {
   const [userAgent, setUserAgent] = useState<UserAgent | null>(null);
   const [registered, setRegistered] = useState<boolean>(false);
   const [session, setSession] = useState<Session | null>(null);
+  const [invitation, setInvitation] = useState<Invitation | null>(null);
   const [target, setTarget] = useState<string>("");
   const localAudioRef = useRef<HTMLAudioElement>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
@@ -35,56 +39,75 @@ const App: React.FC = () => {
   const serverPath = "/ws";
   const wsPort = 8089;
 
-  const sessionState = useSessionState(session);
-  const handleSession = useMemo(() => sipService(session, remoteAudioRef.current), [session, remoteAudioRef.current])
+  const {
+    changeMicrophone,
+    changeSpeaker,
+    startStatsMonitoring,
+    stopStatsMonitoring,
+    sessionState,
+    mediaStats,
+    terminate,
+    setHold,
+    // incomingCall,
+  } = sipService(session, remoteAudioRef.current)
 
   console.log("Session State Yeni:", sessionState)
 
   const checkAudioPermissions = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      console.log("Mikrofon izni alındı.");
       stream.getTracks().forEach(track => track.stop());
+      if (!stream.active) {
+        return { message: "Mikrofon izni alındı.", success: true }
+      }
     } catch (err) {
-      console.error("Mikrofon izni reddedildi veya bir hata oluştu:", err);
+      return { message: "Mikrofon iznini kontrol edin\n(Tarayıcınız medya aygıtlarını desteklemiyor olabilir.)\nİzinler aktif ve halen çalışmıyorsa farklı tarayıcıda tekrar deneyin.", err, success: false }
     }
   };
 
   const getAudioDevices = async () => {
+    try {
+      const deviceInfos = await navigator.mediaDevices.enumerateDevices();
 
-    const deviceInfos = await navigator.mediaDevices.enumerateDevices();
-    setAudioDevices(deviceInfos);
+      if (!deviceInfos || deviceInfos.length === 0) {
+        console.error("Cihaz bilgileri alınamadı.");
+        return { message: "Cihaz bilgileri alınamadı.", success: false };
+      }
 
-    const microphones = deviceInfos.filter(
-      (device) => device.kind === "audioinput"
-    );
-    const speakers = deviceInfos.filter(
-      (device) => device.kind === "audiooutput"
-    );
+      console.warn("deviceInfos", deviceInfos);
+      setAudioDevices(deviceInfos);
 
-    if (microphones.length > 0) {
-      setSelectedMicrophone(microphones[0].deviceId);
-    }
+      const microphones = deviceInfos.filter(
+        (device) => device.kind === "audioinput"
+      );
+      const speakers = deviceInfos.filter(
+        (device) => device.kind === "audiooutput"
+      );
 
-    if (speakers.length > 0) {
-      setSelectedSpeaker(speakers[0].deviceId);
+      if (microphones.length > 0) {
+        setSelectedMicrophone(microphones[0].deviceId);
+      }
+
+      if (speakers.length > 0) {
+        setSelectedSpeaker(speakers[0].deviceId);
+      }
+      console.log("Cihaz bilgileri başarıyla alındı")
+      return { message: "Cihaz bilgileri başarıyla alındı.", success: true };
+    } catch (err) {
+      console.error("Cihaz bilgilerini alırken bir hata oluştu:", err);
+      return { message: "Cihaz bilgilerini alırken bir hata oluştu.", err, success: false };
     }
   };
 
-  const handleDeviceChange = useCallback(async () => {
+  const handleDeviceChange = async () => {
     await getAudioDevices();
     await handleMicrophoneChange({ target: { value: selectedMicrophone } } as React.ChangeEvent<HTMLSelectElement>);
-    handleSpeakerChange({ target: { value: selectedSpeaker } } as React.ChangeEvent<HTMLSelectElement>);
-  }, [selectedMicrophone, selectedSpeaker])
+    await handleSpeakerChange({ target: { value: selectedSpeaker } } as React.ChangeEvent<HTMLSelectElement>);
+  }
 
   useEffect(() => {
-    checkAudioPermissions()
-
     getAudioDevices();
-
-
     navigator.mediaDevices.ondevicechange = handleDeviceChange;
-
     return () => {
       navigator.mediaDevices.ondevicechange = null;
     };
@@ -94,15 +117,15 @@ const App: React.FC = () => {
   const handleMicrophoneChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
     const newDeviceId = event.target.value;
 
-    session && await handleSession.changeMicrophone(newDeviceId)
+    session && await changeMicrophone(newDeviceId)
     setSelectedMicrophone(newDeviceId)
   };
 
 
-  const handleSpeakerChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+  const handleSpeakerChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
     const newDeviceId = event.target.value;
 
-    session && handleSession.changeSpeaker(newDeviceId)
+    session && await changeSpeaker(newDeviceId)
     setSelectedSpeaker(newDeviceId);
   };
 
@@ -110,6 +133,7 @@ const App: React.FC = () => {
     switch (sessionState) {
       case SessionState.Terminated:
         setSession(null)
+        setInvitation(null)
         break;
       default:
         break;
@@ -121,7 +145,10 @@ const App: React.FC = () => {
     traceSip: true,
   };
 
+  console.log("Ekran içi Session:", session)
+
   const userAgentOptions: UserAgentOptions = {
+
     uri: UserAgent.makeURI(`sip:${username}@${wsServer}`),
     transportOptions,
     authorizationUsername: username,
@@ -131,21 +158,26 @@ const App: React.FC = () => {
     logLevel: "debug",
     delegate: {
       onInvite(invitation) {
-        console.log("Yeni arama geldi:", invitation);
-
-        invitation.accept({
-          sessionDescriptionHandlerOptions: {
-            constraints: { audio: true, video: false },
-          }
-        }).then((response) => {
-          console.log("Arama kabul edildi:", response);
-          setSession(invitation);
-        }).catch((error) => {
-          console.error("Arama kabul edilemedi:", error);
-        });
-      },
-      onConnect() {
-        console.log("Connect oldu")
+        setInvitation(invitation)
+        invitation.delegate = {
+          onAck(ack) {
+            console.log("onAck çalıştı", ack)
+            setInvitation(null)
+          },
+          onBye(bye) {
+            console.log("onBye çalıştı", bye)
+            // bye.accept().then(() => {
+            // })
+            setInvitation(null)
+          },
+          onCancel(cancel) {
+            console.log("onBye çalıştı", cancel)
+            setInvitation(null)
+          },
+          onSessionDescriptionHandler() {
+            setSession(invitation)
+          },
+        }
       },
     }
   };
@@ -176,12 +208,43 @@ const App: React.FC = () => {
   };
 
   const handleHangup = async () => {
-    await handleSession?.terminate()
+    await terminate()
+  }
+  const handleRefreshDevices = async () => {
+    const permission = await checkAudioPermissions()
+
+    if (!permission?.success) {
+      alert(permission?.message)
+      return
+    }
+    console.log(permission.message)
+    getAudioDevices()
+  }
+
+  const handleAnswer = async () => {
+    if (invitation) {
+      await invitation
+        .accept()
+        .then(() => {
+          console.log("Arama kabul edildi:", invitation);
+          setInvitation(null)
+        })
+        .catch((error) => {
+          console.error("Arama kabul edilemedi:", error);
+        });
+    } else {
+      console.log("Gelen çağrı bulunamadı!")
+    }
   }
 
   const handleCall = async () => {
+    const permission = await checkAudioPermissions()
+
+    if (!permission?.success) {
+      alert(permission?.message)
+      return
+    }
     const newSession = await call(userAgent, registered, target)
-    console.log("newSession:", newSession)
     if (newSession) {
       setSession(newSession);
     }
@@ -222,21 +285,22 @@ const App: React.FC = () => {
               value={target ?? ""}
               onChange={(e) => setTarget(e.target.value)}
             />
-            <button onClick={handleCall}>Call</button>
-            {session && <button onClick={handleHangup}>Hangup</button>}
+            <button onClick={handleCall}>Arama Yap</button>
+            <button onClick={setHold}>Beklemeye Al</button>
+            {session && <button onClick={handleHangup}>Kapat</button>}
+            {invitation && <button onClick={handleHangup}>Reddet</button>}
           </>
         )}
         {/* Ses akışı */}
-        <audio ref={localAudioRef} autoPlay muted></audio>
-        <audio ref={remoteAudioRef} autoPlay></audio>
+        <audio ref={localAudioRef} translate="no" autoPlay muted></audio>
+        <audio ref={remoteAudioRef} translate="no" autoPlay></audio>
       </div>
 
+      {invitation && <button onClick={handleAnswer}>
+        Yanıtla
+      </button>}
       <div>
-        <button onClick={
-          () => {
-            checkAudioPermissions()
-            getAudioDevices()
-          }}>
+        <button onClick={handleRefreshDevices}>
           Cihazları Yenile
         </button>
         <div>
@@ -269,6 +333,24 @@ const App: React.FC = () => {
           <h2>Seçilen Aygıtlar</h2>
           <p>Seçilen Mikrofon: {selectedMicrophone}</p>
           <p>Seçilen Hoparlör: {selectedSpeaker}</p>
+        </div>
+        <div>
+          <h2>Gelen Giden Veriler</h2>
+          <label htmlFor="selectMs"></label>
+          <select id="selectMs" defaultValue={-1} onChange={(event) => {
+            if (Number(event.target.value) === -1) {
+              stopStatsMonitoring()
+              return
+            }
+            startStatsMonitoring(Number(event.target.value))
+          }}>
+            <option value={-1}>Stop Monitoring</option>
+            <option value={1000}>1000</option>
+            <option value={3000}>3000</option>
+            <option value={5000}>5000</option>
+          </select>
+          <p>Gelen Paketler: {mediaStats.bytesReceived}</p>
+          <p>Giden Paketler: {mediaStats.bytesSent}</p>
         </div>
       </div>
     </div>
