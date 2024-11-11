@@ -1,34 +1,14 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import {
-  UserAgent,
-  Registerer,
-  SessionState,
-  Session,
-  UserAgentOptions,
-  Invitation,
-} from "sip.js";
-import sipService, { call } from "./services/sip/sipService";
-import { TransportOptions } from "sip.js/lib/platform/web";
-import handleSession from "./services/sip/sipService";
-
-// Cihaz türlerini tanımlamak için gerekli tipler
-type MediaDeviceInfo = {
-  deviceId: string;
-  kind: string;
-  label: string;
-};
+import React, { useState, useRef, useEffect } from "react";
+import { SessionState } from "sip.js";
+import sipService from "./services/sip/sipService";
 
 const App: React.FC = () => {
 
-  // media audioDevices states
+  // Media AudioDevices States
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedMicrophone, setSelectedMicrophone] = useState<string>("");
   const [selectedSpeaker, setSelectedSpeaker] = useState<string>("");
-
-  const [userAgent, setUserAgent] = useState<UserAgent | null>(null);
-  const [registered, setRegistered] = useState<boolean>(false);
-  const [session, setSession] = useState<Session | null>(null);
-  const [invitation, setInvitation] = useState<Invitation | null>(null);
+  //Sip Option States
   const [target, setTarget] = useState<string>("");
   const localAudioRef = useRef<HTMLAudioElement>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
@@ -46,10 +26,16 @@ const App: React.FC = () => {
     stopStatsMonitoring,
     sessionState,
     mediaStats,
+    registered,
+    incomingCall,
+    currentSession,
     terminate,
+    reject,
     setHold,
-    // incomingCall,
-  } = sipService(session, remoteAudioRef.current)
+    register,
+    call,
+    answerIncomingCall
+  } = sipService({ username: username, password: password, serverPath: serverPath, wsPort: wsPort, wsServer: wsServer, media: { remote: { audio: remoteAudioRef.current || undefined } } })
 
   console.log("Session State Yeni:", sessionState)
 
@@ -117,7 +103,7 @@ const App: React.FC = () => {
   const handleMicrophoneChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
     const newDeviceId = event.target.value;
 
-    session && await changeMicrophone(newDeviceId)
+    await changeMicrophone(newDeviceId)
     setSelectedMicrophone(newDeviceId)
   };
 
@@ -125,91 +111,24 @@ const App: React.FC = () => {
   const handleSpeakerChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
     const newDeviceId = event.target.value;
 
-    session && await changeSpeaker(newDeviceId)
+    await changeSpeaker(newDeviceId)
     setSelectedSpeaker(newDeviceId);
   };
 
-  useEffect(() => {
-    switch (sessionState) {
-      case SessionState.Terminated:
-        setSession(null)
-        setInvitation(null)
-        break;
-      default:
-        break;
-    }
-  }, [sessionState])
-
-  const transportOptions: TransportOptions = {
-    server: `wss://${wsServer}:${wsPort}${serverPath}`,
-    traceSip: true,
-  };
-
-  console.log("Ekran içi Session:", session)
-
-  const userAgentOptions: UserAgentOptions = {
-
-    uri: UserAgent.makeURI(`sip:${username}@${wsServer}`),
-    transportOptions,
-    authorizationUsername: username,
-    authorizationPassword: password,
-    displayName: username,
-    logBuiltinEnabled: true,
-    logLevel: "debug",
-    delegate: {
-      onInvite(invitation) {
-        setInvitation(invitation)
-        invitation.delegate = {
-          onAck(ack) {
-            console.log("onAck çalıştı", ack)
-            setInvitation(null)
-          },
-          onBye(bye) {
-            console.log("onBye çalıştı", bye)
-            // bye.accept().then(() => {
-            // })
-            setInvitation(null)
-          },
-          onCancel(cancel) {
-            console.log("onBye çalıştı", cancel)
-            setInvitation(null)
-          },
-          onSessionDescriptionHandler() {
-            setSession(invitation)
-          },
-        }
-      },
-    }
-  };
+  // useEffect(() => {
+  //   switch (sessionState) {
+  //     case SessionState.Terminated:
+  //       setSession(null)
+  //       break;
+  //     default:
+  //       break;
+  //   }
+  // }, [sessionState])
 
   const handleRegister = async () => {
-    if (!username || !password) {
-      console.error("Username and password are required!");
-      return;
-    }
-
-    const ua = new UserAgent(userAgentOptions);
-    console.log("UserAgent oluşturuldu:", ua);
-    ua.start()
-      .then(() => {
-        const registerer = new Registerer(ua);
-        registerer.register().then((response) => {
-          console.log("handleRegister Kayıt başarılı:", response);
-        }).catch((error) => {
-          console.log("Kayıt başarısız hata:", error);
-        });
-        setRegistered(true);
-        setUserAgent(ua);
-        console.log("Kullanıcı kayıt oldu!");
-      })
-      .catch((error: Error) => {
-        console.error("Register hata:", error);
-      });
+    register()
   };
 
-  const handleHangup = async () => {
-    await terminate()
-  }
   const handleRefreshDevices = async () => {
     const permission = await checkAudioPermissions()
 
@@ -222,19 +141,7 @@ const App: React.FC = () => {
   }
 
   const handleAnswer = async () => {
-    if (invitation) {
-      await invitation
-        .accept()
-        .then(() => {
-          console.log("Arama kabul edildi:", invitation);
-          setInvitation(null)
-        })
-        .catch((error) => {
-          console.error("Arama kabul edilemedi:", error);
-        });
-    } else {
-      console.log("Gelen çağrı bulunamadı!")
-    }
+    await answerIncomingCall()
   }
 
   const handleCall = async () => {
@@ -244,10 +151,11 @@ const App: React.FC = () => {
       alert(permission?.message)
       return
     }
-    const newSession = await call(userAgent, registered, target)
-    if (newSession) {
-      setSession(newSession);
-    }
+
+    await call(target)
+    // if (newSession) {
+    //   setSession(newSession);
+    // }
   };
 
   return (
@@ -287,8 +195,8 @@ const App: React.FC = () => {
             />
             <button onClick={handleCall}>Arama Yap</button>
             <button onClick={setHold}>Beklemeye Al</button>
-            {session && <button onClick={handleHangup}>Kapat</button>}
-            {invitation && <button onClick={handleHangup}>Reddet</button>}
+            {currentSession && <button onClick={terminate}>Kapat</button>}
+            {incomingCall && <button onClick={reject}>Reddet</button>}
           </>
         )}
         {/* Ses akışı */}
@@ -296,7 +204,7 @@ const App: React.FC = () => {
         <audio ref={remoteAudioRef} translate="no" autoPlay></audio>
       </div>
 
-      {invitation && <button onClick={handleAnswer}>
+      {incomingCall && <button onClick={handleAnswer}>
         Yanıtla
       </button>}
       <div>
