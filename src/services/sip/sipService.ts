@@ -4,12 +4,19 @@ import {
   Inviter,
   InviterInviteOptions,
   InviterOptions,
-  Session,
+  Registerer,
   SessionState,
   UserAgent,
+  UserAgentOptions,
 } from "sip.js";
 import { URI } from "sip.js/lib/core";
-import { holdModifier, stripVideo } from "sip.js/lib/platform/web";
+import { holdModifier, TransportOptions } from "sip.js/lib/platform/web";
+import {
+  CustomSessionState,
+  SessionStateType,
+  SessionType,
+  User,
+} from "./type";
 
 const wsServer = "liwewireelectrical.site";
 const initialStatsValues = {
@@ -19,30 +26,145 @@ const initialStatsValues = {
   bytesReceived: 0,
 };
 
-function handleSession(
-  session: Session | null,
-  speaker: HTMLAudioElement | null
-) {
-  const [sessionState, setSessionState] = useState<SessionState>(
+function sipService(user: User) {
+  const speaker = user.media?.remote?.audio;
+  const [sessionState, setSessionState] = useState<SessionStateType>(
     SessionState.Initial
   );
   const [mediaStats, setMediaStats] = useState(initialStatsValues);
   const [statsIsActive, setStatsIsActive] = useState<number | null>(null);
   const [isOnHold, setIsOnHold] = useState<boolean>(false);
 
-  const sessionDescriptionHandler: any = session?.sessionDescriptionHandler;
+  const [userAgent, setUserAgent] = useState<UserAgent | null>(null);
+  const [registered, setRegistered] = useState<boolean>(false);
+  const [invitation, setInvitation] = useState<SessionType | null>(null);
+  const [sessions, setSessions] = useState<Array<SessionType>>([]);
+
+  const sessionsLastIndex = sessions.length > 0 ? sessions.length - 1 : 0;
+  const currentSession: SessionType | null =
+    sessions.length > 0 ? sessions?.[0] : null;
+
+  const transportOptions: TransportOptions = {
+    server: `wss://${wsServer}:${user.wsPort}${user.serverPath}`,
+    traceSip: true,
+  };
+
+  let uaOptions: UserAgentOptions = {
+    uri: UserAgent.makeURI(`sip:${user.username}@${wsServer}`),
+    transportOptions,
+    authorizationUsername: user.username,
+    authorizationPassword: user.password,
+    displayName: user.username,
+    logBuiltinEnabled: true,
+    logLevel: "debug",
+    delegate: {
+      onInvite(invitation) {
+        setInvitation({
+          session: invitation,
+          sessionState: invitation.state,
+        });
+        invitation.delegate = {
+          onAck(ack) {
+            console.log("onAck çalıştı", ack);
+            setInvitation(null);
+          },
+          onBye(bye) {
+            console.log("onBye çalıştı", bye);
+            // bye.accept().then(() => {
+            // })
+            setInvitation(null);
+          },
+          onCancel(cancel) {
+            console.log("onBye çalıştı", cancel);
+            setInvitation(null);
+          },
+          onSessionDescriptionHandler(sessionDescriptionHandler, provisional) {
+            const newInvitation: SessionType = {
+              session: invitation,
+              sessionState: invitation.state,
+            };
+
+            setInvitation(newInvitation);
+            setSessions((prevState) => [...prevState, newInvitation]);
+          },
+        };
+      },
+      ...user.delegate,
+    },
+    ...user.userAgentOptions,
+  };
+
+  const register = () => {
+    if (!user.username || !user.password) {
+      console.error("Username and password are required!");
+      return;
+    }
+
+    const ua = new UserAgent(uaOptions);
+
+    console.log("UserAgent oluşturuldu:", ua);
+
+    ua.start()
+      .then(() => {
+        const registerer = new Registerer(ua);
+        registerer
+          .register()
+          .then((response) => {
+            console.log("handleRegister Kayıt başarılı:", response);
+          })
+          .catch((error) => {
+            console.log("Kayıt başarısız hata:", error);
+          });
+        setRegistered(true);
+        setUserAgent(ua);
+        console.log("Kullanıcı kayıt oldu!");
+      })
+      .catch((error: Error) => {
+        console.error("Register hata:", error);
+      });
+  };
+
+  //Session Management//
+  const sessionDescriptionHandler: any =
+    currentSession?.session?.sessionDescriptionHandler;
   const peerConnection: RTCPeerConnection =
     sessionDescriptionHandler?.peerConnection;
 
+  //SessionState Control
   useEffect(() => {
-    if (statsIsActive === null || !session) {
+    switch (sessionState) {
+      case CustomSessionState.Held:
+        break;
+      case CustomSessionState.InConferance:
+        break;
+      case SessionState.Initial:
+        break;
+      case SessionState.Establishing:
+        break;
+      case SessionState.Established:
+        break;
+      case SessionState.Terminating:
+        break;
+      case SessionState.Terminated:
+        setSessions((prevState) =>
+          prevState.filter((s) => s.session.id !== currentSession?.session.id)
+        );
+        break;
+      default:
+        throw new Error("Unknown state");
+    }
+  }, [sessionState]);
+
+  //Stats Control
+  useEffect(() => {
+    if (statsIsActive === null || !currentSession?.session) {
       setMediaStats(initialStatsValues);
       return;
     }
 
     const updateMediaStats = async () => {
-      const stats = await monitorMediaStats(); // Değerleri al
-      setMediaStats(stats); // State'i güncelle
+      const stats = await monitorMediaStats();
+      setMediaStats(stats);
     };
 
     const intervalId = setInterval(
@@ -51,15 +173,16 @@ function handleSession(
     );
 
     return () => clearInterval(intervalId);
-  }, [session, statsIsActive]);
+  }, [currentSession?.session, statsIsActive]);
 
+  //Session Starting
   useEffect(() => {
-    if (!session) {
+    if (!currentSession?.session) {
       setSessionState(SessionState.Terminated);
       return;
     }
 
-    session.delegate = {
+    currentSession.session.delegate = {
       async onBye(bye) {
         await bye.accept();
         console.log("onBye calisti");
@@ -74,15 +197,26 @@ function handleSession(
     startSpeakerStream();
 
     const handleStateChange = (newState: SessionState) => {
-      setSessionState(newState);
+      switch (newState) {
+        case SessionState.Established:
+          setSessionState((prevState) =>
+            prevState === CustomSessionState.Held ||
+            prevState === CustomSessionState.InConferance
+              ? prevState
+              : SessionState.Established
+          );
+          break;
+        default:
+          setSessionState(newState);
+      }
     };
 
-    session.stateChange.addListener(handleStateChange);
+    currentSession?.session.stateChange.addListener(handleStateChange);
 
     return () => {
-      session.stateChange.removeListener(handleStateChange);
+      currentSession?.session.stateChange.removeListener(handleStateChange);
     };
-  }, [session]);
+  }, [currentSession?.session]);
 
   const enableSenderTracks = (enable: boolean) => {
     peerConnection?.getSenders().forEach((sender: RTCRtpSender) => {
@@ -100,15 +234,8 @@ function handleSession(
     });
   };
 
-  // const mute = () => {
-  //   enableSenderTracks(false);
-  // };
-  // const unMute = () => {
-  //   enableSenderTracks(true);
-  // };
-
   const changeMicrophone = async (deviceId: string) => {
-    if (session) {
+    if (currentSession?.session) {
       try {
         const newStream = await navigator.mediaDevices.getUserMedia({
           audio: { deviceId: { exact: deviceId } },
@@ -156,50 +283,61 @@ function handleSession(
   };
 
   const terminate = async () => {
-    if (!session) {
+    if (!currentSession?.session) {
       console.log("terminate Session bulunamadı!!");
       return;
     }
+
     switch (sessionState) {
       case SessionState.Initial:
-        if (session instanceof Inviter) {
-          await session.cancel().then(() => {
+        if (currentSession?.session instanceof Inviter) {
+          await currentSession?.session.cancel().then(() => {
             console.log(`terminate Inviter never sent INVITE (canceled)`);
           });
-        } else if (session instanceof Invitation) {
-          await session.reject().then(() => {
-            console.log(`terminate Invitation rejected (sent 480)`);
-          });
-        } else {
-          throw new Error("terminate Unknown session type.");
         }
         break;
       case SessionState.Establishing:
-        if (session instanceof Inviter) {
-          await session.cancel().then(() => {
+        if (currentSession?.session instanceof Inviter) {
+          await currentSession?.session.cancel().then(() => {
             console.log(`terminate Inviter canceled (sent CANCEL)`);
           });
-        } else if (session instanceof Invitation) {
-          await session.reject().then(() => {
-            console.log(`terminate Invitation rejected (sent 480)`);
-          });
-        } else {
-          throw new Error("terminate Unknown session type.");
         }
         break;
       case SessionState.Established:
-        await session.bye().then(() => {
+        await currentSession?.session.bye().then(() => {
+          console.log(`terminate Session ended (sent BYE in Established)`);
+        });
+        break;
+      case CustomSessionState.Held:
+        await currentSession?.session.bye().then(() => {
+          console.log(`terminate Session ended (sent BYE in Established)`);
+        });
+        break;
+      case CustomSessionState.InConferance:
+        await currentSession?.session.bye().then(() => {
           console.log(`terminate Session ended (sent BYE in Established)`);
         });
         break;
       case SessionState.Terminating:
-        console.log("terminate", sessionState);
         break;
       case SessionState.Terminated:
-        console.log("terminated", sessionState);
         break;
       default:
-        throw new Error("Unknown state");
+        throw new Error(`terminate Unknown state: ${sessionState}`);
+    }
+  };
+
+  const reject = async () => {
+    if (!invitation?.session) {
+      console.log("terminate Session bulunamadı!!");
+      return;
+    }
+
+    if (invitation?.session instanceof Invitation) {
+      await invitation?.session.reject().then(() => {
+        console.log(`terminate Invitation rejected (sent 480)`);
+        setInvitation(null);
+      });
     }
   };
 
@@ -235,19 +373,15 @@ function handleSession(
     return statsData;
   };
 
-  // const setHold = () => {
-  //   enableReceiverTracks(!isOnHold);
-  //   enableSenderTracks(!isOnHold);
-  //   setIsOnHold((prev) => !prev);
-  // };
-
   const setHold = async (): Promise<{
     message: string;
     success: boolean;
   }> => {
-    setIsOnHold((prev) => !prev);
     try {
-      if (!session || !session.sessionDescriptionHandler) {
+      if (
+        !currentSession?.session ||
+        !currentSession?.session.sessionDescriptionHandler
+      ) {
         return { message: "Geçerli bir oturum bulunamadı.", success: false };
       }
       if (peerConnection.localDescription) {
@@ -257,7 +391,7 @@ function handleSession(
           : []; // Beklemeden çıkarmak için
 
         // Re-INVITE gönderimi
-        await session.invite({
+        await currentSession?.session.invite({
           requestDelegate: {
             onAccept: () => {
               console.log(`Call ${!isOnHold ? "on hold" : "resumed"}`);
@@ -269,6 +403,8 @@ function handleSession(
           sessionDescriptionHandlerModifiers: modifiers,
         });
       }
+      setIsOnHold((prev) => !prev);
+      setSessionState(CustomSessionState.Held);
       return {
         message: `Çağrı ${
           !isOnHold ? "beklemeye alındı" : "beklemeden çıkarıldı"
@@ -284,73 +420,79 @@ function handleSession(
     }
   };
 
+  const call = async (target: string) => {
+    if (userAgent && registered) {
+      const targetURI = new URI("sip", target, wsServer);
+      const inviterOptions: InviterOptions = {
+        sessionDescriptionHandlerOptions: {
+          constraints: {
+            audio: true,
+            video: false,
+          },
+        },
+        earlyMedia: true,
+      };
+
+      try {
+        const inviter = new Inviter(userAgent, targetURI, inviterOptions);
+
+        const inviterInviteOptions: InviterInviteOptions = {
+          sessionDescriptionHandlerOptions: {
+            constraints: { audio: true, video: false },
+          },
+        };
+
+        inviter
+          .invite()
+          .then(() => {})
+          .catch((error: Error) => {
+            console.error("inviter.invite() hata:", error);
+          });
+        setSessions((prevState) => [
+          ...prevState,
+          { session: inviter, sessionState: inviter.state },
+        ]);
+      } catch (error) {
+        console.error("inviter.invite() Media akışı alma hatası:", error);
+      }
+    } else {
+      console.error("inviter.invite() UserAgent ya da kayıtlı değil!");
+    }
+  };
+
+  const answerIncomingCall = async () => {
+    if (invitation?.session instanceof Invitation && invitation?.session) {
+      await invitation.session
+        .accept()
+        .then(() => {
+          console.log("Arama kabul edildi:", invitation);
+          setInvitation(null);
+        })
+        .catch((error) => {
+          console.error("Arama kabul edilemedi:", error);
+        });
+    } else {
+      console.log("Gelen çağrı bulunamadı!");
+    }
+  };
+
   return {
     sessionState,
+    incomingCall: invitation,
+    registered,
     mediaStats,
+    currentSession,
     changeMicrophone,
-    terminate,
     changeSpeaker,
     startStatsMonitoring,
     stopStatsMonitoring,
     setHold,
+    call,
+    terminate,
+    reject,
+    answerIncomingCall,
+    register,
   };
 }
 
-export default handleSession;
-
-export const call = async (
-  userAgent: UserAgent | null,
-  registered: boolean,
-  target: string
-): Promise<Inviter | void> => {
-  if (userAgent && registered) {
-    const targetURI = new URI("sip", target, wsServer);
-    const inviterOptions: InviterOptions = {
-      sessionDescriptionHandlerOptions: {
-        constraints: {
-          audio: true,
-          video: false,
-        },
-      },
-      earlyMedia: true,
-    };
-
-    try {
-      const inviter = new Inviter(userAgent, targetURI, inviterOptions);
-      const inviterInviteOptions: InviterInviteOptions = {
-        sessionDescriptionHandlerOptions: {
-          constraints: { audio: true, video: false },
-        },
-        // requestDelegate: {
-        //   onAccept: (): void => {
-        //     this.held = hold;
-        //     enableReceiverTracks(true);
-        //     this.enableSenderTracks(!this.held && !this.muted);
-        //     if (this.delegate && this.delegate.onCallHold) {
-        //       this.delegate.onCallHold(this.held);
-        //     }
-        //   },
-        //   onReject: (): void => {
-        //     this.logger.warn(`[${this.id}] re-invite request was rejected`);
-        //     this.enableReceiverTracks(!this.held);
-        //     this.enableSenderTracks(!this.held && !this.muted);
-        //     if (this.delegate && this.delegate.onCallHold) {
-        //       this.delegate.onCallHold(this.held);
-        //     }
-        //   }
-        // }
-      };
-      inviter
-        .invite()
-        .then(() => {})
-        .catch((error: Error) => {
-          console.error("inviter.invite() hata:", error);
-        });
-      return inviter;
-    } catch (error) {
-      console.error("inviter.invite() Media akışı alma hatası:", error);
-    }
-  } else {
-    console.error("inviter.invite() UserAgent ya da kayıtlı değil!");
-  }
-};
+export default sipService;
