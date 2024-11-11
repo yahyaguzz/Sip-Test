@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { SessionState } from "sip.js";
 import sipService from "./services/sip/sipService";
+import { CustomSessionState } from "./services/sip/type";
 
 const App: React.FC = () => {
 
@@ -34,8 +35,19 @@ const App: React.FC = () => {
     setHold,
     register,
     call,
-    answerIncomingCall
-  } = sipService({ username: username, password: password, serverPath: serverPath, wsPort: wsPort, wsServer: wsServer, media: { remote: { audio: remoteAudioRef.current || undefined } } })
+    answer
+  } = sipService({
+    username: username,
+    password: password,
+    serverPath: serverPath,
+    wsPort: wsPort,
+    wsServer: wsServer,
+    media: {
+      remote: {
+        audio: remoteAudioRef.current || undefined
+      }
+    }
+  })
 
   console.log("Session State Yeni:", sessionState)
 
@@ -60,7 +72,7 @@ const App: React.FC = () => {
         return { message: "Cihaz bilgileri alınamadı.", success: false };
       }
 
-      console.warn("deviceInfos", deviceInfos);
+      console.log("deviceInfos", deviceInfos);
       setAudioDevices(deviceInfos);
 
       const microphones = deviceInfos.filter(
@@ -115,16 +127,6 @@ const App: React.FC = () => {
     setSelectedSpeaker(newDeviceId);
   };
 
-  // useEffect(() => {
-  //   switch (sessionState) {
-  //     case SessionState.Terminated:
-  //       setSession(null)
-  //       break;
-  //     default:
-  //       break;
-  //   }
-  // }, [sessionState])
-
   const handleRegister = async () => {
     register()
   };
@@ -138,10 +140,6 @@ const App: React.FC = () => {
     }
     console.log(permission.message)
     getAudioDevices()
-  }
-
-  const handleAnswer = async () => {
-    await answerIncomingCall()
   }
 
   const handleCall = async () => {
@@ -194,7 +192,7 @@ const App: React.FC = () => {
               onChange={(e) => setTarget(e.target.value)}
             />
             <button onClick={handleCall}>Arama Yap</button>
-            <button onClick={setHold}>Beklemeye Al</button>
+            <button onClick={setHold}>{sessionState === CustomSessionState.Held ? "Beklemede" : "Beklemeye Al"}</button>
             {currentSession && <button onClick={terminate}>Kapat</button>}
             {incomingCall && <button onClick={reject}>Reddet</button>}
           </>
@@ -204,7 +202,7 @@ const App: React.FC = () => {
         <audio ref={remoteAudioRef} translate="no" autoPlay></audio>
       </div>
 
-      {incomingCall && <button onClick={handleAnswer}>
+      {incomingCall && <button onClick={answer}>
         Yanıtla
       </button>}
       <div>

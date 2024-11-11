@@ -42,7 +42,7 @@ function sipService(user: User) {
 
   const sessionsLastIndex = sessions.length > 0 ? sessions.length - 1 : 0;
   const currentSession: SessionType | null =
-    sessions.length > 0 ? sessions?.[0] : null;
+    sessions.length > 0 ? sessions?.[sessionsLastIndex] : null;
 
   const transportOptions: TransportOptions = {
     server: `wss://${wsServer}:${user.wsPort}${user.serverPath}`,
@@ -404,7 +404,9 @@ function sipService(user: User) {
         });
       }
       setIsOnHold((prev) => !prev);
-      setSessionState(CustomSessionState.Held);
+      setSessionState(
+        isOnHold ? SessionState.Established : CustomSessionState.Held
+      );
       return {
         message: `Çağrı ${
           !isOnHold ? "beklemeye alındı" : "beklemeden çıkarıldı"
@@ -460,12 +462,13 @@ function sipService(user: User) {
     }
   };
 
-  const answerIncomingCall = async () => {
+  const answer = async () => {
     if (invitation?.session instanceof Invitation && invitation?.session) {
       await invitation.session
         .accept()
         .then(() => {
           console.log("Arama kabul edildi:", invitation);
+          setHold();
           setInvitation(null);
         })
         .catch((error) => {
@@ -490,7 +493,7 @@ function sipService(user: User) {
     call,
     terminate,
     reject,
-    answerIncomingCall,
+    answer,
     register,
   };
 }
