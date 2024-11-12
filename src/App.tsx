@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect } from "react";
-import { SessionState } from "sip.js";
+import { Session, SessionState } from "sip.js";
 import sipService from "./services/sip/sipService";
 import { CustomSessionState } from "./services/sip/type";
 
 const App: React.FC = () => {
+  //numpad keys
+  const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
 
   // Media AudioDevices States
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
@@ -15,6 +17,30 @@ const App: React.FC = () => {
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const [username, setUsername] = useState<string>("2000");
   const [password, setPassword] = useState<string>("W3$7Tr^j@");
+  const [input, setInput] = useState("");
+
+  // const sendDTMF = (session: Session | null, tone: string) => {
+  //   if (!session) {
+  //     console.error("Session bulunamadı.");
+  //     return;
+  //   }
+
+  //   const dtmfBody = `Signal=${tone}\r\nDuration=160\r\n`; // Ton ve süre bilgisi
+
+  //   const options = {
+  //     requestOptions: {
+  //       body: {
+  //         contentDisposition: "render",
+  //         contentType: "application/dtmf-relay",
+  //         content: dtmfBody,
+  //       },
+  //     },
+  //   };
+
+  //   session.info(options).catch((error) => {
+  //     console.error("DTMF gönderimi başarısız:", error);
+  //   });
+  // };
 
   const wsServer = "liwewireelectrical.site";
   const serverPath = "/ws";
@@ -27,7 +53,7 @@ const App: React.FC = () => {
     stopStatsMonitoring,
     sessionState,
     mediaStats,
-    registered,
+    registerer,
     incomingCall,
     currentSession,
     terminate,
@@ -35,7 +61,11 @@ const App: React.FC = () => {
     setHold,
     register,
     call,
-    answer
+    answer,
+    sendDmtf,
+    mute,
+    isMute,
+    unRegister
   } = sipService({
     username: username,
     password: password,
@@ -49,6 +79,11 @@ const App: React.FC = () => {
     }
   })
 
+  const handleKeyPress = (key: string) => {
+    console.log("Tuşa Basıldı:", key);
+    setInput((prev) => prev + key);
+    sendDmtf(key)
+  };
   console.log("Session State Yeni:", sessionState)
 
   const checkAudioPermissions = async () => {
@@ -182,8 +217,9 @@ const App: React.FC = () => {
           onChange={(e) => setPassword(e.target.value)}
         /> */}
         <button onClick={handleRegister}>Register</button>
+        <button onClick={unRegister}>unRegister</button>
         {/* Arama Yapma */}
-        {registered && (
+        {registerer && (
           <>
             <input
               type="text"
@@ -192,8 +228,12 @@ const App: React.FC = () => {
               onChange={(e) => setTarget(e.target.value)}
             />
             <button onClick={handleCall}>Arama Yap</button>
-            <button onClick={setHold}>{sessionState === CustomSessionState.Held ? "Beklemede" : "Beklemeye Al"}</button>
-            {currentSession && <button onClick={terminate}>Kapat</button>}
+            {currentSession &&
+              <>
+                <button onClick={terminate}>Kapat</button>
+                <button onClick={setHold}>{sessionState === CustomSessionState.Held ? "Beklemede" : "Beklemeye Al"}</button>
+              </>}
+            <button onClick={mute}>{isMute ? "Mikrofon Kapalı" : "Mikrofon Açık"}</button>
             {incomingCall && <button onClick={reject}>Reddet</button>}
           </>
         )}
@@ -202,9 +242,14 @@ const App: React.FC = () => {
         <audio ref={remoteAudioRef} translate="no" autoPlay></audio>
       </div>
 
-      {incomingCall && <button onClick={answer}>
-        Yanıtla
-      </button>}
+      {incomingCall && <>
+        <h3>Gelen Arama</h3>
+        {incomingCall.displayName && <h1>{incomingCall.displayName}</h1>}
+        <h2>{incomingCall.number}</h2>
+        <button onClick={answer}>
+          Yanıtla
+        </button>
+      </>}
       <div>
         <button onClick={handleRefreshDevices}>
           Cihazları Yenile
@@ -257,6 +302,25 @@ const App: React.FC = () => {
           </select>
           <p>Gelen Paketler: {mediaStats.bytesReceived}</p>
           <p>Giden Paketler: {mediaStats.bytesSent}</p>
+        </div>
+        <div className="flex flex-col items-center justify-center bg-slate-700 p-2">
+          {/* Giriş Alanı */}
+          <div className="mb-4 text-2xl font-semibold text-gray-800">
+            {input || "Tuşlayın..."}
+          </div>
+
+          {/* Tuş Takımı */}
+          <div className="grid grid-cols-3 gap-4 w-40">
+            {keys.map((key) => (
+              <button
+                key={key}
+                onClick={() => handleKeyPress(key)}
+                className="bg-blue-500 text-white font-bold py-2 px-4 rounded hover:bg-blue-700 active:bg-blue-800"
+              >
+                {key}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </div>

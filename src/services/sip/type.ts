@@ -30,5 +30,11 @@ export interface SessionType {
   session: Session | Invitation | Inviter;
   sessionState: SessionStateType;
   displayName?: string;
-  uri?: string;
+  number?: string;
+}
+
+export interface SipServiceResponse {
+  message: string;
+  success: boolean;
+  error?: unknown;
 }
