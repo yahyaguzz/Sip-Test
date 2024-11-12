@@ -52,13 +52,18 @@ function sipService(user: User) {
     traceSip: true,
   };
 
-  const generateSession = (session: Session | Invitation | Inviter) => {
+  const generateSession = async (session: Session | Invitation | Inviter) => {
     const newSession: SessionType = {
       session: session,
       sessionState: session.state,
       displayName: session.remoteIdentity.displayName,
       number: session.remoteIdentity.uri.user,
     };
+    await trackInitialize(session);
+    // changeMicrophone("default");
+    startSpeakerStream(session);
+    enableReceiverTracks(true, session);
+    enableSenderTracks(session, !isMute);
 
     if (session instanceof Invitation) {
       setInvitation(newSession);
@@ -86,6 +91,7 @@ function sipService(user: User) {
           onAck(ack) {
             console.log("onAck çalıştı", ack);
             setInvitation(null);
+            enableSenderTracks(invitation, !isMute);
           },
           onBye(bye) {
             console.log("onBye çalıştı", bye);
@@ -104,9 +110,6 @@ function sipService(user: User) {
             setInvitation(null);
           },
           onSessionDescriptionHandler(sessionDescriptionHandler, provisional) {
-            enableSenderTracks(invitation);
-            enableReceiverTracks(true, invitation);
-            startSpeakerStream(invitation);
             generateSession(invitation);
           },
         };
@@ -256,14 +259,39 @@ function sipService(user: User) {
     };
   }, [currentSession?.session]);
 
-  const enableSenderTracks = (session: Session): SipServiceResponse => {
+  const trackInitialize = async (session: Session) => {
+    const sdh: any = session?.sessionDescriptionHandler;
+    const peerConnection: RTCPeerConnection = sdh?.peerConnection;
+    try {
+      // Yeni medya akışını (MediaStream) al
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
+      stream.getAudioTracks()[0].enabled = !isMute;
+      // İlk audio track'i seç ve başlangıç durumunu ayarla
+      const audioTrack = stream.getAudioTracks()[0];
+      audioTrack.enabled = !isMute; // mute true ise sessiz, false ise aktif
+
+      // Session içindeki peerConnection'a track ekle
+      peerConnection.addTrack(audioTrack, stream);
+
+      console.log("Track eklendi ve başlangıç durumu ayarlandı.");
+    } catch (error) {
+      console.error("Track eklenirken hata oluştu:", error);
+    }
+  };
+
+  const enableSenderTracks = (
+    session: Session,
+    enable: boolean
+  ): SipServiceResponse => {
     const sdh: any = session?.sessionDescriptionHandler;
     const peerConnection: RTCPeerConnection = sdh?.peerConnection;
     console.log("enableSenderTracks değişti:", peerConnection);
     try {
       peerConnection?.getSenders().forEach((sender: RTCRtpSender) => {
         if (sender.track) {
-          sender.track.enabled = !isMute;
+          sender.track.enabled = enable;
         }
       });
     } catch (error) {
@@ -333,29 +361,33 @@ function sipService(user: User) {
   };
 
   const changeMicrophone = async (deviceId: string) => {
-    if (currentSession?.session) {
-      try {
-        const newStream = await navigator.mediaDevices.getUserMedia({
-          audio: { deviceId: { exact: deviceId } },
-        });
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: { exact: deviceId } },
+      });
 
-        const newTrack = newStream.getAudioTracks()[0];
-        if (peerConnection) {
+      let newTrack = newStream.getAudioTracks()[0];
+      newTrack.enabled = !isMute;
+      if (sessions.length > 0) {
+        sessions.forEach(async ({ session }) => {
+          const sessionDescriptionHandler: any =
+            session.sessionDescriptionHandler;
+          const peerConnection: RTCPeerConnection =
+            sessionDescriptionHandler.peerConnection;
+
           const sender = peerConnection
             .getSenders()
             .find((s: RTCRtpSender) => s.track?.kind === "audio");
-
           if (sender && newTrack) {
             await sender.replaceTrack(newTrack);
+            enableSenderTracks(session, !isMute);
           }
-        } else {
-          console.log("TESTTTTTTT");
-        }
-      } catch (error) {
-        console.error("Mikrofon değiştirme hatası:", error);
+        });
+      } else {
+        console.log("Görüşme bulunamadı");
       }
-    } else {
-      console.error("handleMicrophoneChange: Session bulunamadı");
+    } catch (error) {
+      console.error("Mikrofon değiştirme hatası:", error);
     }
   };
 
@@ -539,7 +571,7 @@ function sipService(user: User) {
   const mute = () => {
     if (sessions.length > 0) {
       sessions?.map(({ session }) => {
-        enableSenderTracks(session);
+        enableSenderTracks(session, !!isMute);
       });
     }
     setIsMute(!isMute);
@@ -562,29 +594,25 @@ function sipService(user: User) {
       try {
         const inviter = new Inviter(userAgent, targetURI, inviterOptions);
 
-        const inviterInviteOptions: InviterInviteOptions = {
-          sessionDescriptionHandlerOptions: {
-            constraints: { audio: true, video: false },
-          },
-        };
-
         inviter.delegate = {
           onBye(bye) {
             setSessions((prevState) =>
               prevState.filter((s) => s.session.id !== inviter.id)
             );
           },
+          onAck(ack) {
+            // enableSenderTracks(inviter);
+            console.warn("ACK çalıştı", ack);
+          },
           onCancel(cancel) {
             setSessions((prevState) =>
               prevState.filter((s) => s.session.id !== inviter.id)
             );
           },
-          onSessionDescriptionHandler(sessionDescriptionHandler, provisional) {
-            enableSenderTracks(inviter);
-            enableReceiverTracks(true, inviter);
-            startSpeakerStream(inviter);
-            generateSession(inviter);
-          },
+          async onSessionDescriptionHandler(
+            sessionDescriptionHandler,
+            provisional
+          ) {},
         };
 
         inviter
@@ -593,6 +621,7 @@ function sipService(user: User) {
           .catch((error: Error) => {
             console.error("inviter.invite() hata:", error);
           });
+        await generateSession(inviter);
       } catch (error) {
         console.error("inviter.invite() Media akışı alma hatası:", error);
       }

@@ -223,10 +223,16 @@ const App: React.FC = () => {
           <>
             <input
               type="text"
+              list="suggestions"
               placeholder="Target username"
               value={target ?? ""}
               onChange={(e) => setTarget(e.target.value)}
             />
+            <datalist id="suggestions">
+              <option value="905418733299" />
+              <option value="2000" />
+              <option value="2001" />
+            </datalist>
             <button onClick={handleCall}>Arama Yap</button>
             {currentSession &&
               <>
