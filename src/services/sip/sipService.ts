@@ -59,12 +59,12 @@ function sipService(user: User) {
       displayName: session.remoteIdentity.displayName,
       number: session.remoteIdentity.uri.user,
     };
-    await trackInitialize(session);
-    // changeMicrophone("default");
+    // Setup tracks
+    await changeMicrophone("default"); // Select default device at startup
     startSpeakerStream(session);
     enableReceiverTracks(true, session);
     enableSenderTracks(session, !isMute);
-
+    // Allows the user to see incoming calls.
     if (session instanceof Invitation) {
       setInvitation(newSession);
     }
@@ -201,9 +201,6 @@ function sipService(user: User) {
         setSessions((prevState) =>
           prevState.filter((s) => s.sessionState !== SessionState.Terminated)
         );
-        // setSessions((prevState) =>
-        //   prevState.filter((s) => s.session.id !== currentSession?.session.id)
-        // );
         break;
       default:
         throw new Error("Unknown state");
@@ -258,28 +255,6 @@ function sipService(user: User) {
       currentSession?.session.stateChange.removeListener(handleStateChange);
     };
   }, [currentSession?.session]);
-
-  const trackInitialize = async (session: Session) => {
-    const sdh: any = session?.sessionDescriptionHandler;
-    const peerConnection: RTCPeerConnection = sdh?.peerConnection;
-    try {
-      // Yeni medya akışını (MediaStream) al
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-      });
-      stream.getAudioTracks()[0].enabled = !isMute;
-      // İlk audio track'i seç ve başlangıç durumunu ayarla
-      const audioTrack = stream.getAudioTracks()[0];
-      audioTrack.enabled = !isMute; // mute true ise sessiz, false ise aktif
-
-      // Session içindeki peerConnection'a track ekle
-      peerConnection.addTrack(audioTrack, stream);
-
-      console.log("Track eklendi ve başlangıç durumu ayarlandı.");
-    } catch (error) {
-      console.error("Track eklenirken hata oluştu:", error);
-    }
-  };
 
   const enableSenderTracks = (
     session: Session,
@@ -609,10 +584,6 @@ function sipService(user: User) {
               prevState.filter((s) => s.session.id !== inviter.id)
             );
           },
-          async onSessionDescriptionHandler(
-            sessionDescriptionHandler,
-            provisional
-          ) {},
         };
 
         inviter
