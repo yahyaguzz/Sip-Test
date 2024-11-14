@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import {
   Invitation,
   Inviter,
-  InviterInviteOptions,
   InviterOptions,
   Registerer,
   Session,
@@ -15,34 +14,32 @@ import { URI } from "sip.js/lib/core";
 import { holdModifier, TransportOptions } from "sip.js/lib/platform/web";
 import {
   CustomSessionState,
-  SessionStateType,
   SessionType,
   SipServiceResponse,
   User,
 } from "./type";
 
 const wsServer = "liwewireelectrical.site";
-const initialStatsValues = {
-  packetsSent: 0,
-  bytesSent: 0,
-  packetsReceived: 0,
-  bytesReceived: 0,
-};
+interface StatsType {
+  sessionId: string;
+  stats: {
+    packetsSent: number;
+    bytesSent: number;
+    packetsReceived: number;
+    bytesReceived: number;
+  };
+}
 
 function sipService(user: User) {
   const speaker = user.media?.remote?.audio;
-  const [sessionState, setSessionState] = useState<SessionStateType>(
-    SessionState.Initial
-  );
-  const [mediaStats, setMediaStats] = useState(initialStatsValues);
+  const [mediaStats, setMediaStats] = useState<Array<StatsType>>([]);
   const [statsIsActive, setStatsIsActive] = useState<number | null>(null);
-  const [isOnHold, setIsOnHold] = useState<boolean>(false);
 
   const [userAgent, setUserAgent] = useState<UserAgent | null>(null);
   const [registerer, setRegisterer] = useState<Registerer | null>(null);
   const [invitation, setInvitation] = useState<SessionType | null>(null);
   const [sessions, setSessions] = useState<Array<SessionType>>([]);
-  const [isMute, setIsMute] = useState<boolean>(true);
+  const [isMute, setIsMute] = useState<boolean>(false);
 
   const sessionsLastIndex = sessions.length > 0 ? sessions.length - 1 : 0;
   const currentSession: SessionType | null =
@@ -65,12 +62,17 @@ function sipService(user: User) {
     enableReceiverTracks(true, session);
     enableSenderTracks(session, !isMute);
     // Allows the user to see incoming calls.
-    if (session instanceof Invitation) {
-      setInvitation(newSession);
-    }
+    // if (session instanceof Invitation) {
+    //   setInvitation(newSession);
+    // }
 
     setSessions((prevState) => [...prevState, newSession]);
-    return newSession;
+  };
+
+  const removeSession = (session: Session) => {
+    setSessions((prevState) =>
+      prevState.filter((s) => s.session.id !== session.id)
+    );
   };
 
   let uaOptions: UserAgentOptions = {
@@ -86,31 +88,32 @@ function sipService(user: User) {
         setInvitation({
           session: invitation,
           sessionState: invitation.state,
+          displayName: invitation.remoteIdentity.displayName,
+          number: invitation.remoteIdentity.uri.user,
         });
         invitation.delegate = {
           onAck(ack) {
             console.log("onAck çalıştı", ack);
+            toggleHold();
             setInvitation(null);
-            enableSenderTracks(invitation, !isMute);
+            generateSession(invitation);
+            // enableSenderTracks(invitation, !isMute);
           },
           onBye(bye) {
             console.log("onBye çalıştı", bye);
             // bye.accept().then(() => {
             // })
-            setSessions((prevState) =>
-              prevState.filter((s) => s.session.id !== invitation.id)
-            );
+            removeSession(invitation);
             setInvitation(null);
           },
           onCancel(cancel) {
             console.log("onBye çalıştı", cancel);
-            setSessions((prevState) =>
-              prevState.filter((s) => s.session.id !== invitation.id)
-            );
+            removeSession(invitation);
             setInvitation(null);
           },
           onSessionDescriptionHandler(sessionDescriptionHandler, provisional) {
-            generateSession(invitation);
+            // toggleHold();
+            // generateSession(invitation);
           },
         };
       },
@@ -163,7 +166,6 @@ function sipService(user: User) {
       setRegisterer(null);
       setIsMute(false);
       setSessions([]);
-      setIsOnHold(false);
       setInvitation(null);
     } catch (error) {
       return {
@@ -176,47 +178,25 @@ function sipService(user: User) {
   };
 
   //Session Management//
-  const sessionDescriptionHandler: any =
-    currentSession?.session?.sessionDescriptionHandler;
-  const peerConnection: RTCPeerConnection =
-    sessionDescriptionHandler?.peerConnection;
   console.log("sipService-sessions:", sessions);
-  //SessionState Control
-  useEffect(() => {
-    //todo: Buradaki media aygıtlarının aktifleştirilmesi daha farklı olmalı gibime geliyor.
-    switch (sessionState) {
-      case CustomSessionState.Held:
-        break;
-      case CustomSessionState.InConferance:
-        break;
-      case SessionState.Initial:
-        break;
-      case SessionState.Establishing:
-        break;
-      case SessionState.Established:
-        break;
-      case SessionState.Terminating:
-        break;
-      case SessionState.Terminated:
-        setSessions((prevState) =>
-          prevState.filter((s) => s.sessionState !== SessionState.Terminated)
-        );
-        break;
-      default:
-        throw new Error("Unknown state");
-    }
-  }, [sessionState]);
-
   //Stats Control
   useEffect(() => {
     if (statsIsActive === null || !currentSession?.session) {
-      setMediaStats(initialStatsValues);
+      setMediaStats([]);
       return;
     }
 
     const updateMediaStats = async () => {
-      const stats = await monitorMediaStats();
-      setMediaStats(stats);
+      const allStats = await Promise.all(
+        sessions.map(async (s) => {
+          return {
+            sessionId: s.session.id,
+            stats: await getMediaStats(s.session),
+          };
+        })
+      );
+
+      setMediaStats(allStats);
     };
 
     const intervalId = setInterval(
@@ -227,34 +207,61 @@ function sipService(user: User) {
     return () => clearInterval(intervalId);
   }, [currentSession?.session, statsIsActive]);
 
-  //Session Starting
+  //Session State Management
   useEffect(() => {
-    if (!currentSession?.session) {
-      setSessionState(SessionState.Terminated);
+    if (!currentSession) {
       return;
     }
 
-    const handleStateChange = (newState: SessionState) => {
+    const handleStateChange = (
+      newState: SessionState,
+      session: SessionType
+    ) => {
       switch (newState) {
         case SessionState.Established:
-          setSessionState((prevState) =>
-            prevState === CustomSessionState.Held ||
-            prevState === CustomSessionState.InConferance
-              ? prevState
-              : SessionState.Established
+          const updatedSessions = sessions.map((s) =>
+            s.session.id === session.session.id
+              ? {
+                  ...s,
+                  sessionState:
+                    s.sessionState === CustomSessionState.Held ||
+                    s.sessionState === CustomSessionState.InConferance
+                      ? s.sessionState
+                      : SessionState.Established,
+                }
+              : s
+          );
+          setSessions(updatedSessions);
+          break;
+        case SessionState.Terminated:
+          setSessions((prevState) =>
+            prevState.filter((s) => s.sessionState !== SessionState.Terminated)
           );
           break;
         default:
-          setSessionState(newState);
+          const newSessions = sessions?.map((s) =>
+            s.session.id === session.session.id
+              ? {
+                  ...s,
+                  sessionState: newState,
+                }
+              : s
+          );
+          setSessions(newSessions);
       }
     };
 
-    currentSession?.session.stateChange.addListener(handleStateChange);
-
-    return () => {
-      currentSession?.session.stateChange.removeListener(handleStateChange);
-    };
-  }, [currentSession?.session]);
+    return sessions?.forEach((session) => {
+      session.session.stateChange.addListener((state) =>
+        handleStateChange(state, session)
+      );
+      return () => {
+        session.session.stateChange.removeListener((event) =>
+          handleStateChange(event, session)
+        );
+      };
+    });
+  }, [sessions]);
 
   const enableSenderTracks = (
     session: Session,
@@ -376,48 +383,48 @@ function sipService(user: User) {
     }
   };
 
-  const terminate = async (): Promise<SipServiceResponse> => {
-    if (!currentSession?.session) {
+  const terminate = async (
+    session?: SessionType
+  ): Promise<SipServiceResponse> => {
+    if (!currentSession) {
       return { message: "Görüşme bulunamadı", success: false };
     }
-    let terminateStatus = false;
+
+    const sessionUsed: SessionType = session || currentSession;
     try {
-      switch (sessionState) {
+      switch (sessionUsed.sessionState) {
         case SessionState.Initial:
-          if (currentSession?.session instanceof Inviter) {
-            await currentSession?.session.cancel();
-            terminateStatus = true;
+          if (sessionUsed?.session instanceof Inviter) {
+            await sessionUsed?.session.cancel();
+            removeSession(sessionUsed.session);
           }
           break;
         case SessionState.Establishing:
-          if (currentSession?.session instanceof Inviter) {
-            await currentSession?.session.cancel();
-            terminateStatus = true;
+          if (sessionUsed?.session instanceof Inviter) {
+            await sessionUsed?.session.cancel();
+            removeSession(sessionUsed.session);
           }
           break;
         case SessionState.Established:
-          await currentSession?.session.bye();
-          terminateStatus = true;
+          await sessionUsed?.session.bye();
+          removeSession(sessionUsed.session);
           break;
         case CustomSessionState.Held:
-          await currentSession?.session.bye();
-          terminateStatus = true;
+          await sessionUsed?.session.bye();
+          removeSession(sessionUsed.session);
           break;
         case CustomSessionState.InConferance:
-          await currentSession?.session.bye();
-          terminateStatus = true;
+          await sessionUsed?.session.bye();
+          removeSession(sessionUsed.session);
           break;
         case SessionState.Terminating:
           break;
         case SessionState.Terminated:
           break;
         default:
-          throw new Error(`terminate Unknown state: ${sessionState}`);
-      }
-      if (terminateStatus) {
-        setSessions((prevState) =>
-          prevState.filter((s) => s.session.id !== currentSession?.session.id)
-        );
+          throw new Error(
+            `terminate Unknown state: ${sessionUsed.sessionState}`
+          );
       }
       return { message: "Görüşme sonlandı", success: true };
     } catch (error) {
@@ -452,7 +459,9 @@ function sipService(user: User) {
     setStatsIsActive(null);
   };
 
-  const monitorMediaStats = async () => {
+  const getMediaStats = async (session: Session) => {
+    const sdh: any = session?.sessionDescriptionHandler;
+    const peerConnection: RTCPeerConnection = sdh?.peerConnection;
     let statsData = {
       packetsSent: 0,
       bytesSent: 0,
@@ -461,17 +470,22 @@ function sipService(user: User) {
     };
 
     if (peerConnection) {
-      const stats = await peerConnection?.getStats();
-      stats.forEach((report) => {
-        if (report.type === "outbound-rtp" && report.kind === "audio") {
-          statsData.packetsSent = report.packetsSent;
-          statsData.bytesSent = report.bytesSent;
-        } else if (report.type === "inbound-rtp" && report.kind === "audio") {
-          statsData.packetsReceived = report.packetsReceived;
-          statsData.bytesReceived = report.bytesReceived;
-        }
-      });
+      try {
+        const stats = await peerConnection?.getStats();
+        stats.forEach((report) => {
+          if (report.type === "outbound-rtp" && report.kind === "audio") {
+            statsData.packetsSent = report.packetsSent;
+            statsData.bytesSent = report.bytesSent;
+          } else if (report.type === "inbound-rtp" && report.kind === "audio") {
+            statsData.packetsReceived = report.packetsReceived;
+            statsData.bytesReceived = report.bytesReceived;
+          }
+        });
+      } catch (error) {
+        console.error("Stats getirilemedi Hata:", error);
+      }
     }
+
     return statsData;
   };
 
@@ -493,17 +507,24 @@ function sipService(user: User) {
     });
   };
 
-  const setHold = async (): Promise<SipServiceResponse> => {
+  const toggleHold = async (
+    session?: SessionType
+  ): Promise<SipServiceResponse> => {
+    const sessionUsed = session || currentSession;
+    const isOnHold = sessionUsed?.sessionState === CustomSessionState.Held;
+    const sdh: any = sessionUsed?.session?.sessionDescriptionHandler;
+    const peerConnection: RTCPeerConnection = sdh?.peerConnection;
+    if (
+      !sessionUsed?.session ||
+      !sessionUsed?.session.sessionDescriptionHandler
+    ) {
+      return {
+        message: "Geçerli bir oturum bulunamadı.",
+        success: false,
+      };
+    }
+
     try {
-      if (
-        !currentSession?.session ||
-        !currentSession?.session.sessionDescriptionHandler
-      ) {
-        return {
-          message: "Geçerli bir oturum bulunamadı.",
-          success: false,
-        };
-      }
       if (peerConnection.localDescription) {
         // SDP Güncellemesi
         const modifiers = !isOnHold
@@ -511,7 +532,7 @@ function sipService(user: User) {
           : []; // Beklemeden çıkarmak için
 
         // Re-INVITE gönderimi
-        await currentSession?.session.invite({
+        await sessionUsed?.session.invite({
           requestDelegate: {
             onAccept: () => {
               console.log(`Call ${!isOnHold ? "on hold" : "resumed"}`);
@@ -523,10 +544,17 @@ function sipService(user: User) {
           sessionDescriptionHandlerModifiers: modifiers,
         });
       }
-      setIsOnHold((prev) => !prev);
-      setSessionState(
-        isOnHold ? SessionState.Established : CustomSessionState.Held
+      const updatedSessions = sessions.map((s) =>
+        s.session.id === sessionUsed.session.id
+          ? {
+              ...s,
+              sessionState: isOnHold
+                ? SessionState.Established
+                : CustomSessionState.Held,
+            }
+          : s
       );
+      setSessions(updatedSessions);
       return {
         message: `Çağrı ${
           !isOnHold ? "beklemeye alındı" : "beklemeden çıkarıldı"
@@ -543,7 +571,7 @@ function sipService(user: User) {
     }
   };
 
-  const mute = () => {
+  const toggleMute = () => {
     if (sessions.length > 0) {
       sessions?.map(({ session }) => {
         enableSenderTracks(session, !!isMute);
@@ -571,18 +599,14 @@ function sipService(user: User) {
 
         inviter.delegate = {
           onBye(bye) {
-            setSessions((prevState) =>
-              prevState.filter((s) => s.session.id !== inviter.id)
-            );
+            removeSession(inviter);
           },
           onAck(ack) {
             // enableSenderTracks(inviter);
             console.warn("ACK çalıştı", ack);
           },
           onCancel(cancel) {
-            setSessions((prevState) =>
-              prevState.filter((s) => s.session.id !== inviter.id)
-            );
+            removeSession(inviter);
           },
         };
 
@@ -592,6 +616,7 @@ function sipService(user: User) {
           .catch((error: Error) => {
             console.error("inviter.invite() hata:", error);
           });
+        await toggleHold();
         await generateSession(inviter);
       } catch (error) {
         console.error("inviter.invite() Media akışı alma hatası:", error);
@@ -606,7 +631,7 @@ function sipService(user: User) {
       try {
         await invitation.session.accept();
         console.log("Arama kabul edildi:", invitation);
-        setHold();
+        toggleHold();
         setInvitation(null);
       } catch (error) {
         return { message: "Arama kabul edilemedi" };
@@ -617,23 +642,24 @@ function sipService(user: User) {
   };
 
   return {
-    sessionState,
+    sessionState: currentSession?.sessionState,
     incomingCall: invitation,
     registerer,
     mediaStats,
     currentSession,
+    sessions,
     changeMicrophone,
     changeSpeaker,
     startStatsMonitoring,
     stopStatsMonitoring,
-    setHold,
+    toggleHold,
+    toggleMute,
     call,
     terminate,
     reject,
     answer,
     register,
     sendDmtf,
-    mute,
     isMute,
     unRegister,
   };

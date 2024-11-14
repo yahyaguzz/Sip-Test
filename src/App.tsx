@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Session, SessionState } from "sip.js";
 import sipService from "./services/sip/sipService";
 import { CustomSessionState } from "./services/sip/type";
 
@@ -19,29 +18,6 @@ const App: React.FC = () => {
   const [password, setPassword] = useState<string>("W3$7Tr^j@");
   const [input, setInput] = useState("");
 
-  // const sendDTMF = (session: Session | null, tone: string) => {
-  //   if (!session) {
-  //     console.error("Session bulunamadı.");
-  //     return;
-  //   }
-
-  //   const dtmfBody = `Signal=${tone}\r\nDuration=160\r\n`; // Ton ve süre bilgisi
-
-  //   const options = {
-  //     requestOptions: {
-  //       body: {
-  //         contentDisposition: "render",
-  //         contentType: "application/dtmf-relay",
-  //         content: dtmfBody,
-  //       },
-  //     },
-  //   };
-
-  //   session.info(options).catch((error) => {
-  //     console.error("DTMF gönderimi başarısız:", error);
-  //   });
-  // };
-
   const wsServer = "liwewireelectrical.site";
   const serverPath = "/ws";
   const wsPort = 8089;
@@ -56,15 +32,16 @@ const App: React.FC = () => {
     registerer,
     incomingCall,
     currentSession,
+    sessions,
+    isMute,
     terminate,
     reject,
-    setHold,
+    toggleHold,
     register,
     call,
     answer,
     sendDmtf,
-    mute,
-    isMute,
+    toggleMute,
     unRegister
   } = sipService({
     username: username,
@@ -194,6 +171,19 @@ const App: React.FC = () => {
   return (
     <div>
       <div>
+        {sessions.map((session, index) => <div key={`session-${index}-${session.number}`} className="flex flex-row">
+          <div>
+
+            <div>Display Name: {session.displayName}</div>
+            <div>Numara: {session.number}</div>
+            <div>Durum: {session.sessionState}</div>
+          </div>
+          <div>
+            <button onClick={async () => terminate(session)}>Görüşmeyi Bitir</button>
+            <button onClick={async () => await toggleHold(session)}>{session.sessionState === CustomSessionState.Held ? "Beklemeden Çıkar" : "Beklemeye Al"}</button>
+
+          </div>
+        </div>)}
         <h2>SIP.js WebRTC Client</h2>
         {/* Register */}
         <select value={username} onChange={(e) => setUsername(e.target.value)}>
@@ -236,10 +226,10 @@ const App: React.FC = () => {
             <button onClick={handleCall}>Arama Yap</button>
             {currentSession &&
               <>
-                <button onClick={terminate}>Kapat</button>
-                <button onClick={setHold}>{sessionState === CustomSessionState.Held ? "Beklemede" : "Beklemeye Al"}</button>
+                <button onClick={async () => await terminate()}>Kapat</button>
+                <button onClick={async () => await toggleHold()}>{currentSession?.sessionState === CustomSessionState.Held ? "Beklemede" : "Beklemeye Al"}</button>
               </>}
-            <button onClick={mute}>{isMute ? "Mikrofon Kapalı" : "Mikrofon Açık"}</button>
+            <button onClick={toggleMute}>{isMute ? "Mikrofonu Aç" : "Mikrofonu Kapat"}</button>
             {incomingCall && <button onClick={reject}>Reddet</button>}
           </>
         )}
@@ -247,11 +237,14 @@ const App: React.FC = () => {
         <audio ref={localAudioRef} translate="no" autoPlay muted></audio>
         <audio ref={remoteAudioRef} translate="no" autoPlay></audio>
       </div>
-
+      {currentSession && <><h2>currentSession Çağrı</h2>
+        {currentSession.displayName && <h1>Display Name: {currentSession.displayName}</h1>}
+        <h1>Number: {currentSession.number}</h1>
+      </>}
       {incomingCall && <>
-        <h3>Gelen Arama</h3>
-        {incomingCall.displayName && <h1>{incomingCall.displayName}</h1>}
-        <h2>{incomingCall.number}</h2>
+        <h2>incomingCall Gelen Çağrı</h2>
+        {incomingCall.displayName && <h1>Display Name: {incomingCall.displayName}</h1>}
+        <h1>Number: {incomingCall.number}</h1>
         <button onClick={answer}>
           Yanıtla
         </button>
@@ -306,8 +299,15 @@ const App: React.FC = () => {
             <option value={3000}>3000</option>
             <option value={5000}>5000</option>
           </select>
-          <p>Gelen Paketler: {mediaStats.bytesReceived}</p>
-          <p>Giden Paketler: {mediaStats.bytesSent}</p>
+          {
+            mediaStats.map(({ stats, sessionId }) =>
+              <>
+                <p>Oturum Id: {sessionId}</p>
+                <p>Gelen Paketler: {stats.bytesReceived}</p>
+                <p>Giden Paketler: {stats.bytesSent}</p>
+              </>)
+          }
+
         </div>
         <div className="flex flex-col items-center justify-center bg-slate-700 p-2">
           {/* Giriş Alanı */}
