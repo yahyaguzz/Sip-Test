@@ -72,24 +72,18 @@ function sipService(user: User) {
             toggleHold();
             setInvitation(null);
             generateSession(invitation);
-            // enableSenderTracks(invitation, !isMute);
           },
           onBye(bye) {
             console.log("onBye çalıştı", bye);
-            // bye.accept().then(() => {
-            // })
             removeSession(invitation);
             setInvitation(null);
           },
           onCancel(cancel) {
-            console.log("onBye çalıştı", cancel);
+            console.log("onCancel çalıştı", cancel);
             removeSession(invitation);
             setInvitation(null);
           },
-          onSessionDescriptionHandler(sessionDescriptionHandler, provisional) {
-            // toggleHold();
-            // generateSession(invitation);
-          },
+          onSessionDescriptionHandler() {},
         };
       },
       ...user.delegate,
@@ -175,7 +169,7 @@ function sipService(user: User) {
   };
 
   //Session Management//
-  console.log("sipService-sessions:", sessions);
+
   //Stats Control
   useEffect(() => {
     if (statsIsActive === null || !currentSession?.session) {
@@ -349,10 +343,8 @@ function sipService(user: User) {
       newTrack.enabled = !isMute;
       if (sessions.length > 0) {
         sessions.forEach(async ({ session }) => {
-          const sessionDescriptionHandler: any =
-            session.sessionDescriptionHandler;
-          const peerConnection: RTCPeerConnection =
-            sessionDescriptionHandler.peerConnection;
+          const sdh: any = session.sessionDescriptionHandler;
+          const peerConnection: RTCPeerConnection = sdh.peerConnection;
 
           const sender = peerConnection
             .getSenders()
