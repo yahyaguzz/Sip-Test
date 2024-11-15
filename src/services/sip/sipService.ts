@@ -44,38 +44,13 @@ function sipService(user: User) {
   const sessionsLastIndex = sessions.length > 0 ? sessions.length - 1 : 0;
   const currentSession: SessionType | null =
     sessions.length > 0 ? sessions?.[sessionsLastIndex] : null;
+
   const transportOptions: TransportOptions = {
     server: `wss://${wsServer}:${user.wsPort}${user.serverPath}`,
     traceSip: true,
   };
 
-  const generateSession = async (session: Session | Invitation | Inviter) => {
-    const newSession: SessionType = {
-      session: session,
-      sessionState: session.state,
-      displayName: session.remoteIdentity.displayName,
-      number: session.remoteIdentity.uri.user,
-    };
-    // Setup tracks
-    await changeMicrophone("default"); // Select default device at startup
-    startSpeakerStream(session);
-    enableReceiverTracks(true, session);
-    enableSenderTracks(session, !isMute);
-    // Allows the user to see incoming calls.
-    // if (session instanceof Invitation) {
-    //   setInvitation(newSession);
-    // }
-
-    setSessions((prevState) => [...prevState, newSession]);
-  };
-
-  const removeSession = (session: Session) => {
-    setSessions((prevState) =>
-      prevState.filter((s) => s.session.id !== session.id)
-    );
-  };
-
-  let uaOptions: UserAgentOptions = {
+  const uaOptions: UserAgentOptions = {
     uri: UserAgent.makeURI(`sip:${user.username}@${wsServer}`),
     transportOptions,
     authorizationUsername: user.username,
@@ -120,6 +95,28 @@ function sipService(user: User) {
       ...user.delegate,
     },
     ...user.userAgentOptions,
+  };
+
+  const generateSession = async (session: Session | Invitation | Inviter) => {
+    const newSession: SessionType = {
+      session: session,
+      sessionState: session.state,
+      displayName: session.remoteIdentity.displayName,
+      number: session.remoteIdentity.uri.user,
+    };
+    // Setup tracks
+    await changeMicrophone("default"); // Select default device at startup
+    startSpeakerStream(session);
+    enableReceiverTracks(true, session);
+    enableSenderTracks(session, !isMute);
+
+    setSessions((prevState) => [...prevState, newSession]);
+  };
+
+  const removeSession = (session: Session) => {
+    setSessions((prevState) =>
+      prevState.filter((s) => s.session.id !== session.id)
+    );
   };
 
   const register = () => {
@@ -489,8 +486,9 @@ function sipService(user: User) {
     return statsData;
   };
 
-  const sendDmtf = (key: string) => {
-    const dtmfBody = `Signal=${key}\r\nDuration=100\r\n`; // Ton ve süre bilgisi
+  const sendDtmf = (key: string, session?: SessionType) => {
+    const sessionUsed = session || currentSession;
+    const dtmfBody = `Signal=${key}\r\nDuration=100\r\n`;
 
     const options: SessionInfoOptions = {
       requestOptions: {
@@ -502,7 +500,7 @@ function sipService(user: User) {
       },
     };
 
-    currentSession?.session.info(options).catch((error) => {
+    sessionUsed?.session.info(options).catch((error) => {
       console.error("DTMF gönderimi başarısız:", error);
     });
   };
@@ -659,7 +657,7 @@ function sipService(user: User) {
     reject,
     answer,
     register,
-    sendDmtf,
+    sendDtmf,
     isMute,
     unRegister,
   };

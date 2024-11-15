@@ -40,7 +40,7 @@ const App: React.FC = () => {
     register,
     call,
     answer,
-    sendDmtf,
+    sendDtmf,
     toggleMute,
     unRegister
   } = sipService({
@@ -59,7 +59,7 @@ const App: React.FC = () => {
   const handleKeyPress = (key: string) => {
     console.log("Tuşa Basıldı:", key);
     setInput((prev) => prev + key);
-    sendDmtf(key)
+    sendDtmf(key)
   };
   console.log("Session State Yeni:", sessionState)
 
