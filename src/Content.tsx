@@ -185,11 +185,11 @@ const Content: React.FC = () => {
                 <h2>SIP.js WebRTC Client</h2>
                 {/* Register */}
                 <select value={username} onChange={(e) => setUsername(e.target.value)}>
-                    <option value="2000" defaultChecked>2000</option>
+                    <option value="2000">2000</option>
                     <option value="2001">2001</option>
                 </select>
                 <select value={password} onChange={(e) => setPassword(e.target.value)}>
-                    <option value="W3$7Tr^j@" defaultChecked>2000 password</option>
+                    <option value="W3$7Tr^j@">2000 password</option>
                     <option value="FpxT6718*">2001 password</option>
                 </select>
                 {/* <input

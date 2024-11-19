@@ -43,7 +43,10 @@ function sipService(user: User) {
 
   const sessionsLastIndex = sessions.length > 0 ? sessions.length - 1 : 0;
   const currentSession: SessionType | null =
-    sessions.length > 0 ? sessions?.[sessionsLastIndex] : null;
+    sessions.length > 0
+      ? sessions?.find((s) => s.sessionState !== CustomSessionState.Held) ||
+        sessions?.[sessionsLastIndex]
+      : null;
 
   const transportOptions: TransportOptions = {
     server: `wss://${wsServer}:${user.wsPort}${user.serverPath}`,
@@ -500,7 +503,22 @@ function sipService(user: User) {
   const toggleHold = async (
     session?: SessionType
   ): Promise<SipServiceResponse> => {
+    const findHeldSession = sessions?.find(
+      (s) => s.sessionState !== CustomSessionState.Held
+    );
     const sessionUsed = session || currentSession;
+
+    if (
+      sessionUsed?.sessionState === CustomSessionState.Held &&
+      findHeldSession
+    ) {
+      return {
+        message:
+          "Aktif olan oturumlar mevcut. Konferans görüşmesi yapmak isterseniz birleştir butonunu kullanınız.",
+        success: false,
+      };
+    }
+
     const isOnHold = sessionUsed?.sessionState === CustomSessionState.Held;
     const sdh: any = sessionUsed?.session?.sessionDescriptionHandler;
     const peerConnection: RTCPeerConnection = sdh?.peerConnection;
@@ -606,7 +624,11 @@ function sipService(user: User) {
           .catch((error: Error) => {
             console.error("inviter.invite() hata:", error);
           });
-        await toggleHold();
+        sessions?.forEach(async (s) => {
+          if (s.sessionState !== CustomSessionState.Held) {
+            await toggleHold(s);
+          }
+        });
         await generateSession(inviter);
       } catch (error) {
         console.error("inviter.invite() Media akışı alma hatası:", error);

@@ -400,7 +400,10 @@ function CallBar({ children }) {
                 checked={
                   currentSession?.sessionState === CustomSessionState.Held
                 }
-                onClick={async () => await toggleHold()}
+                onClick={async () => {
+                  const { message } = await toggleHold();
+                  console.log(message);
+                }}
                 readOnly
               />
               <MdPause className="swap-off" />
@@ -423,7 +426,10 @@ function CallBar({ children }) {
               <Session
                 key={`session-${session.session.id}-${index}`}
                 session={session}
-                handleHold={async () => await toggleHold(session)}
+                handleHold={async () => {
+                  const { message } = await toggleHold(session);
+                  console.log(message);
+                }}
                 handleTerminate={async () => await terminate(session)}
               />
             );
