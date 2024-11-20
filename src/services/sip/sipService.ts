@@ -4,6 +4,7 @@ import {
   Inviter,
   InviterOptions,
   Registerer,
+  RegistererState,
   Session,
   SessionInfoOptions,
   SessionState,
@@ -37,6 +38,8 @@ function sipService(user: User) {
 
   const [userAgent, setUserAgent] = useState<UserAgent | null>(null);
   const [registerer, setRegisterer] = useState<Registerer | null>(null);
+  const [registererState, setRegistererState] =
+    useState<RegistererState | null>(null);
   const [invitation, setInvitation] = useState<SessionType | null>(null);
   const [sessions, setSessions] = useState<Array<SessionType>>([]);
   const [isMute, setIsMute] = useState<boolean>(false);
@@ -131,6 +134,9 @@ function sipService(user: User) {
           .register()
           .then((response) => {
             console.log("handleRegister Kayıt başarılı:", response);
+            registerer.stateChange.addListener((state) => {
+              setRegistererState(state);
+            });
           })
           .catch((error) => {
             console.log("Kayıt başarısız hata:", error);
@@ -143,6 +149,7 @@ function sipService(user: User) {
         console.error("Register hata:", error);
       });
   };
+
   const unRegister = async (): Promise<SipServiceResponse> => {
     if (!userAgent || !registerer) {
       return { message: "Kayıttan çıkma başarısız", success: false };
@@ -656,7 +663,7 @@ function sipService(user: User) {
   return {
     sessionState: currentSession?.sessionState,
     incomingCall: invitation,
-    registerer,
+    registererState,
     mediaStats,
     currentSession,
     sessions,

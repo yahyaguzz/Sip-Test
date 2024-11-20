@@ -39,6 +39,7 @@ import { CustomSessionState } from "../services/sip/type";
 import Session from "./components/Session";
 import Modal from "./components/Modal";
 import IncomingCall from "./components/IncomingCall";
+import { RegistererState } from "sip.js";
 
 function CallBar({ children }) {
   const tabs = [
@@ -72,7 +73,7 @@ function CallBar({ children }) {
     stopStatsMonitoring,
     sessionState,
     mediaStats,
-    registerer,
+    registererState,
     incomingCall,
     currentSession,
     sessions,
@@ -252,9 +253,6 @@ function CallBar({ children }) {
     }
 
     await call(target);
-    // if (newSession) {
-    //   setSession(newSession);
-    // }
   };
 
   const handleMute = async () => {
@@ -328,16 +326,22 @@ function CallBar({ children }) {
           <div className="flex justify-center items-center gap-1">
             <div
               className={`w-[6px] h-[6px] rounded-full ${
-                registerer ? "bg-green-500" : "bg-red-500 animate-pulse"
+                registererState === RegistererState.Registered
+                  ? "bg-green-500"
+                  : "bg-red-500 animate-pulse"
               }`}
             />
             <label className="text-[10px]">
-              {registerer ? "Çevrimiçi" : "Çevrimdışı"}
+              {registererState === RegistererState.Registered
+                ? "Çevrimiçi"
+                : "Çevrimdışı"}
             </label>
           </div>
 
           <button
-            className={`btn btn-circle btn-xs ${registerer && "hidden"}`}
+            className={`btn btn-circle btn-xs ${
+              registererState === RegistererState.Registered && "hidden"
+            }`}
             onClick={() => register()}
           >
             <MdRefresh className="" />
