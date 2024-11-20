@@ -342,7 +342,7 @@ function CallBar({ children }) {
             className={`btn btn-circle btn-xs ${
               registererState === RegistererState.Registered && "hidden"
             }`}
-            onClick={() => register()}
+            onClick={register}
           >
             <MdRefresh className="" />
           </button>

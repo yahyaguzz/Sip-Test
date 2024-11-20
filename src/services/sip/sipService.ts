@@ -252,6 +252,27 @@ function sipService(user: User) {
       }
     };
 
+    // useEffect(() => {
+    //   if (!invitation) return;
+
+    //   // Session durumunu dinlemek için stateChange listener ekle
+    //   invitation?.session.stateChange.addListener((state) => {
+    //     console.log("Session state değişti:", state);
+
+    //     // Çağrı reddedildi veya bittiğinde session'ı kaldır
+    //     if (
+    //       state === SessionState.Terminated
+    //     ) {
+    //       removeSession(invitation.session); // Session'ı listeden kaldır
+    //     }
+    //   });
+
+    //   // return () => {
+    //   //   // Listener'ı temizle
+    //   //   invitation?.session.stateChange.removeListeners();
+    //   // };
+    // }, [invitation]);
+
     return sessions?.forEach((session) => {
       session.session.stateChange.addListener((state) =>
         handleStateChange(state, session)
@@ -381,7 +402,7 @@ function sipService(user: User) {
       console.warn("Tarayıcınız setSinkId() fonksiyonunu desteklemiyor.");
     }
   };
-
+  console.log("currentSession?.sessionState", currentSession?.sessionState);
   const terminate = async (
     session?: SessionType
   ): Promise<SipServiceResponse> => {
@@ -432,20 +453,6 @@ function sipService(user: User) {
         success: false,
         error: error,
       };
-    }
-  };
-
-  const reject = async () => {
-    if (!invitation?.session) {
-      console.log("terminate Session bulunamadı!!");
-      return;
-    }
-
-    if (invitation?.session instanceof Invitation) {
-      await invitation?.session.reject().then(() => {
-        console.log(`terminate Invitation rejected (sent 480)`);
-        setInvitation(null);
-      });
     }
   };
 
@@ -614,10 +621,10 @@ function sipService(user: User) {
 
         inviter.delegate = {
           onBye(bye) {
+            bye.accept();
             removeSession(inviter);
           },
           onAck(ack) {
-            // enableSenderTracks(inviter);
             console.warn("ACK çalıştı", ack);
           },
           onCancel(cancel) {
@@ -626,7 +633,13 @@ function sipService(user: User) {
         };
 
         inviter
-          .invite()
+          .invite({
+            requestDelegate: {
+              onReject: (response) => {
+                removeSession(inviter);
+              },
+            },
+          })
           .then(() => {})
           .catch((error: Error) => {
             console.error("inviter.invite() hata:", error);
@@ -657,6 +670,23 @@ function sipService(user: User) {
       }
     } else {
       console.log("Gelen çağrı bulunamadı!");
+    }
+  };
+
+  const reject = async () => {
+    if (!invitation?.session) {
+      console.log("terminate Session bulunamadı!!");
+      return;
+    }
+
+    if (invitation?.session instanceof Invitation) {
+      await invitation?.session
+        .reject()
+        .then(() => {
+          console.log(`terminate Invitation rejected (sent 480)`);
+          setInvitation(null);
+        })
+        .catch((err) => console.log("Reject Hata:", err));
     }
   };
 
