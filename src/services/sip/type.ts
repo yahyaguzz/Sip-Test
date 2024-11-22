@@ -17,13 +17,14 @@ export interface User {
   delegate?: UserAgentDelegate;
   media?: SimpleUserMedia;
   userAgentOptions?: UserAgentOptions;
+  selectedMicrophone?: string;
 }
 
 export type SessionStateType = SessionState | CustomSessionState;
 
 export enum CustomSessionState {
   Held = "Held",
-  InConferance = "In-Conferance",
+  InConference = "In-Conference",
 }
 
 export interface SessionType {

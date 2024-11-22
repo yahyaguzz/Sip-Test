@@ -87,6 +87,7 @@ function CallBar({ children }) {
     sendDtmf,
     toggleMute,
     unRegister,
+    sessionAddConference,
   } = sipService({
     username: username,
     password: password,
@@ -98,6 +99,7 @@ function CallBar({ children }) {
         audio: remoteAudioRef.current || undefined,
       },
     },
+    selectedMicrophone
   });
 
   // Medya tuşları zil sesini etkilediği için devre dışı bırakıyoruz
@@ -172,7 +174,6 @@ function CallBar({ children }) {
         return { message: "Cihaz bilgileri alınamadı.", success: false };
       }
 
-      console.log("deviceInfos", deviceInfos);
       setAudioDevices(deviceInfos);
 
       const microphones = deviceInfos.filter(
@@ -189,7 +190,6 @@ function CallBar({ children }) {
       if (speakers.length > 0) {
         setSelectedSpeaker(speakers[0].deviceId);
       }
-      console.log("Cihaz bilgileri başarıyla alındı");
       return { message: "Cihaz bilgileri başarıyla alındı.", success: true };
     } catch (err) {
       console.error("Cihaz bilgilerini alırken bir hata oluştu:", err);
@@ -435,6 +435,7 @@ function CallBar({ children }) {
                   console.log(message);
                 }}
                 handleTerminate={async () => await terminate(session)}
+                // handleConference={() => sessionAddConference(selectedMicrophone)}
               />
             );
           })}

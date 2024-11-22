@@ -15,6 +15,7 @@ import { URI } from "sip.js/lib/core";
 import { holdModifier, TransportOptions } from "sip.js/lib/platform/web";
 import {
   CustomSessionState,
+  SessionStateType,
   SessionType,
   SipServiceResponse,
   User,
@@ -44,6 +45,12 @@ function sipService(user: User) {
   const [sessions, setSessions] = useState<Array<SessionType>>([]);
   const [isMute, setIsMute] = useState<boolean>(false);
 
+  const { getAudioContext, closeAudioContext } = useAudioContext();
+
+  const conferenceSessions = sessions?.filter(
+    (s) => s.sessionState === CustomSessionState.InConference
+  );
+  console.log("conferenceSessions", conferenceSessions);
   const sessionsLastIndex = sessions.length > 0 ? sessions.length - 1 : 0;
   const currentSession: SessionType | null =
     sessions.length > 0
@@ -75,9 +82,11 @@ function sipService(user: User) {
         invitation.delegate = {
           onAck(ack) {
             console.log("onAck çalıştı", ack);
-            toggleHold();
-            setInvitation(null);
+            if (currentSession) {
+              toggleHold();
+            }
             generateSession(invitation);
+            setInvitation(null);
           },
           onBye(bye) {
             console.log("onBye çalıştı", bye);
@@ -89,13 +98,68 @@ function sipService(user: User) {
             removeSession(invitation);
             setInvitation(null);
           },
-          onSessionDescriptionHandler() {},
+          onSessionDescriptionHandler() {
+            setupSessionAudio(invitation);
+          },
         };
       },
       ...user.delegate,
     },
     ...user.userAgentOptions,
   };
+
+  useEffect(() => {
+    const setup = async () => {
+      if (!conferenceSessions) {
+        // setAudioContext(null);
+        return;
+      }
+
+      const ac = new AudioContext();
+      const destination = ac.createMediaStreamDestination();
+
+      // Her session'dan gelen sesleri birleştir
+      conferenceSessions.forEach((s) => {
+        const sdh: any = s.session.sessionDescriptionHandler;
+        const peerConnection: RTCPeerConnection = sdh?.peerConnection;
+
+        peerConnection.getReceivers().forEach((receiver) => {
+          if (receiver.track.kind === "audio") {
+            const mediaStream = new MediaStream([receiver.track]);
+            const receiverSource = ac.createMediaStreamSource(mediaStream);
+            receiverSource.connect(destination);
+          }
+        });
+      });
+
+      // Mikrofon seslerini ekle
+      const mic1 = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mic1Source = ac.createMediaStreamSource(mic1);
+      mic1Source.connect(destination);
+
+      // Birleştirilmiş akışı WebRTC'ye bağla
+      const combinedStream = destination.stream;
+
+      conferenceSessions.forEach((s) => {
+        const sdh: any = s.session.sessionDescriptionHandler;
+        const peerConnection: RTCPeerConnection = sdh?.peerConnection;
+
+        combinedStream.getAudioTracks().forEach((track) => {
+          const sender = peerConnection
+            .getSenders()
+            .find((s: RTCRtpSender) => s.track?.kind === "audio");
+          if (sender) {
+            sender.replaceTrack(track);
+            enableSenderTracks(s.session, !isMute);
+          }
+        });
+      });
+
+      // setAudioContext(ac);
+    };
+
+    // setup();
+  }, [conferenceSessions]);
 
   const generateSession = async (session: Session | Invitation | Inviter) => {
     const newSession: SessionType = {
@@ -104,13 +168,32 @@ function sipService(user: User) {
       displayName: session.remoteIdentity.displayName,
       number: session.remoteIdentity.uri.user,
     };
-    // Setup tracks
-    await changeMicrophone("default"); // Select default device at startup
+    await setupSessionAudio(session);
+    setSessions((prevState) => [...prevState, newSession]);
+  };
+//todo: sadece gelen aramada seçilen mikrofonla başlamıyor sonradan değiştirildiğinde seçilen mikrofon kullanılıyor.
+  const setupSessionAudio = async (session: Session | Invitation | Inviter) => {
+    // const newStream = await navigator.mediaDevices.getUserMedia({
+    //   audio: { deviceId: { exact: user.selectedMicrophone } },
+    // });
+
+    // let newTrack = newStream.getAudioTracks()[0];
+    // newTrack.enabled = !isMute;
+    // const sdh: any = session.sessionDescriptionHandler;
+    // const peerConnection: RTCPeerConnection = sdh.peerConnection;
+
+    // const sender = peerConnection
+    //   .getSenders()
+    //   .find((s: RTCRtpSender) => s.track?.kind === "audio");
+    // if (sender && newTrack) {
+    //   await sender.replaceTrack(newTrack);
+    //   enableSenderTracks(session, !isMute);
+    // }
+
+    await changeMicrophone(user?.selectedMicrophone || "default");
     startSpeakerStream(session);
     enableReceiverTracks(true, session);
-    enableSenderTracks(session, !isMute);
-
-    setSessions((prevState) => [...prevState, newSession]);
+    enableSenderTracks(session, true);
   };
 
   const removeSession = (session: Session) => {
@@ -226,7 +309,7 @@ function sipService(user: User) {
                   ...s,
                   sessionState:
                     s.sessionState === CustomSessionState.Held ||
-                    s.sessionState === CustomSessionState.InConferance
+                    s.sessionState === CustomSessionState.InConference
                       ? s.sessionState
                       : SessionState.Established,
                 }
@@ -240,38 +323,17 @@ function sipService(user: User) {
           );
           break;
         default:
-          const newSessions = sessions?.map((s) =>
-            s.session.id === session.session.id
-              ? {
-                  ...s,
-                  sessionState: newState,
-                }
-              : s
-          );
-          setSessions(newSessions);
+        // const newSessions = sessions?.map((s) =>
+        //   s.session.id === session.session.id
+        //     ? {
+        //         ...s,
+        //         sessionState: newState,
+        //       }
+        //     : s
+        // );
+        // setSessions(newSessions);
       }
     };
-
-    // useEffect(() => {
-    //   if (!invitation) return;
-
-    //   // Session durumunu dinlemek için stateChange listener ekle
-    //   invitation?.session.stateChange.addListener((state) => {
-    //     console.log("Session state değişti:", state);
-
-    //     // Çağrı reddedildi veya bittiğinde session'ı kaldır
-    //     if (
-    //       state === SessionState.Terminated
-    //     ) {
-    //       removeSession(invitation.session); // Session'ı listeden kaldır
-    //     }
-    //   });
-
-    //   // return () => {
-    //   //   // Listener'ı temizle
-    //   //   invitation?.session.stateChange.removeListeners();
-    //   // };
-    // }, [invitation]);
 
     return sessions?.forEach((session) => {
       session.session.stateChange.addListener((state) =>
@@ -284,6 +346,126 @@ function sipService(user: User) {
       };
     });
   }, [sessions]);
+
+  //todo: mixAudio fonksionlarından birini düzenle ve konferans görüşmesindeki sesleri doğru şekilde ilet.
+  const sessionAddConference = async (usedMicId?: string) => {
+    const updatedSessions = sessions.map((session) => {
+      const updatedSession: SessionType = {
+        ...session,
+        sessionState: CustomSessionState.InConference,
+      };
+
+      if (session.sessionState === CustomSessionState.Held) {
+        toggleHold(session, CustomSessionState.InConference);
+      }
+
+      return updatedSession;
+    });
+
+    setSessions(updatedSessions);
+
+    try {
+      mixAudio(updatedSessions, usedMicId);
+    } catch (error) {
+      console.log("sessionAddConference Ses ekleme hatası!!!", error);
+    }
+  };
+
+  const mixAudio1 = async (
+    sessions: Array<SessionType>,
+    usedMicId?: string
+  ) => {
+    if (!sessions || sessions.length === 0) return;
+
+    // AudioContext'i al
+    // const ac = getAudioContext();
+    // if (ac) {
+    //   closeAudioContext();
+    // }
+    // const destination = ac.createMediaStreamDestination();
+
+    // Her session'dan gelen sesleri birleştir
+    sessions.forEach((s) => {
+      const sdh: any = s.session.sessionDescriptionHandler;
+      const peerConnection: RTCPeerConnection = sdh?.peerConnection;
+
+      peerConnection.getReceivers().forEach((receiver) => {
+        if (receiver.track.kind === "audio") {
+          const mediaStream = new MediaStream([receiver.track]);
+
+          sessions.forEach((addToSession) => {
+            const sdh: any = addToSession.session.sessionDescriptionHandler;
+            const peerConnection: RTCPeerConnection = sdh?.peerConnection;
+
+            if (s.session.id !== addToSession.session.id) {
+              mediaStream.getAudioTracks().forEach((track) => {
+                // const sender = peerConnection
+                //   .getSenders()
+                //   .find((s: RTCRtpSender) => s.track?.kind === "audio");
+                // if (sender) {
+                //   sender.addTrack(track);
+                // }
+
+                peerConnection.addTrack(track);
+              });
+            }
+          });
+        }
+      });
+    });
+  };
+
+  const mixAudio = async (sessions: Array<SessionType>, usedMicId?: string) => {
+    if (!sessions || sessions.length === 0) return;
+
+    // AudioContext'i al
+    const ac = getAudioContext();
+    if (ac) {
+      closeAudioContext();
+    }
+    const destination = ac.createMediaStreamDestination();
+
+    // Her session'dan gelen sesleri birleştir
+    sessions.forEach((s) => {
+      const sdh: any = s.session.sessionDescriptionHandler;
+      const peerConnection: RTCPeerConnection = sdh?.peerConnection;
+
+      peerConnection.getReceivers().forEach((receiver) => {
+        if (receiver.track.kind === "audio") {
+          const mediaStream = new MediaStream([receiver.track]);
+          const receiverSource = ac.createMediaStreamSource(mediaStream);
+          receiverSource.connect(destination);
+        }
+      });
+    });
+
+    // Mikrofon seslerini ekle
+    const mic = await navigator.mediaDevices.getUserMedia({
+      audio: { deviceId: { exact: usedMicId || "default" } },
+    });
+    const micSource = ac.createMediaStreamSource(mic);
+    micSource.connect(destination);
+
+    // Birleştirilmiş akışı WebRTC'ye bağla
+    const combinedStream = destination.stream;
+
+    sessions.forEach((s) => {
+      const sdh: any = s.session.sessionDescriptionHandler;
+      const peerConnection: RTCPeerConnection = sdh?.peerConnection;
+
+      combinedStream.getAudioTracks().forEach((track) => {
+        const sender = peerConnection
+          .getSenders()
+          .find((s: RTCRtpSender) => s.track?.kind === "audio");
+        if (sender) {
+          sender.replaceTrack(track);
+          enableSenderTracks(s.session, true); // Mikrofonun sesini göndermek için
+        }
+      });
+    });
+
+    console.log("Sesler başarıyla karıştırıldı ve gönderildi.");
+  };
 
   const enableSenderTracks = (
     session: Session,
@@ -373,7 +555,10 @@ function sipService(user: User) {
       let newTrack = newStream.getAudioTracks()[0];
       newTrack.enabled = !isMute;
       if (sessions.length > 0) {
-        sessions.forEach(async ({ session }) => {
+        sessions.forEach(async ({ session, sessionState }) => {
+          // if (sessionState === CustomSessionState.InConference) {
+          //   return;
+          // }
           const sdh: any = session.sessionDescriptionHandler;
           const peerConnection: RTCPeerConnection = sdh.peerConnection;
 
@@ -433,7 +618,7 @@ function sipService(user: User) {
           await sessionUsed?.session.bye();
           removeSession(sessionUsed.session);
           break;
-        case CustomSessionState.InConferance:
+        case CustomSessionState.InConference:
           await sessionUsed?.session.bye();
           removeSession(sessionUsed.session);
           break;
@@ -515,16 +700,25 @@ function sipService(user: User) {
   };
 
   const toggleHold = async (
-    session?: SessionType
+    session?: SessionType,
+    newState?: SessionStateType
   ): Promise<SipServiceResponse> => {
     const findHeldSession = sessions?.find(
       (s) => s.sessionState !== CustomSessionState.Held
     );
     const sessionUsed = session || currentSession;
+    const isOnHold = sessionUsed?.sessionState === CustomSessionState.Held;
+    const newSessionState =
+      newState || isOnHold
+        ? sessionUsed?.sessionState === CustomSessionState.InConference
+          ? CustomSessionState.InConference
+          : SessionState.Established
+        : CustomSessionState.Held;
 
     if (
-      sessionUsed?.sessionState === CustomSessionState.Held &&
-      findHeldSession
+      isOnHold &&
+      findHeldSession &&
+      newState !== CustomSessionState.InConference
     ) {
       return {
         message:
@@ -533,7 +727,6 @@ function sipService(user: User) {
       };
     }
 
-    const isOnHold = sessionUsed?.sessionState === CustomSessionState.Held;
     const sdh: any = sessionUsed?.session?.sessionDescriptionHandler;
     const peerConnection: RTCPeerConnection = sdh?.peerConnection;
     if (
@@ -566,13 +759,12 @@ function sipService(user: User) {
           sessionDescriptionHandlerModifiers: modifiers,
         });
       }
+
       const updatedSessions = sessions.map((s) =>
         s.session.id === sessionUsed.session.id
           ? {
               ...s,
-              sessionState: isOnHold
-                ? SessionState.Established
-                : CustomSessionState.Held,
+              sessionState: newSessionState,
             }
           : s
       );
@@ -649,6 +841,7 @@ function sipService(user: User) {
             await toggleHold(s);
           }
         });
+        await setupSessionAudio(inviter);
         await generateSession(inviter);
       } catch (error) {
         console.error("inviter.invite() Media akışı alma hatası:", error);
@@ -663,7 +856,14 @@ function sipService(user: User) {
       try {
         await invitation.session.accept();
         console.log("Arama kabul edildi:", invitation);
-        toggleHold();
+        sessions.forEach((s) => {
+          if (s.sessionState === SessionState.Established) {
+            toggleHold(s);
+          }
+
+          if (s.sessionState === CustomSessionState.InConference) {
+          }
+        });
         setInvitation(null);
       } catch (error) {
         return { message: "Arama kabul edilemedi" };
@@ -697,6 +897,8 @@ function sipService(user: User) {
     mediaStats,
     currentSession,
     sessions,
+    sessionAddConference,
+    conferenceSessions,
     changeMicrophone,
     changeSpeaker,
     startStatsMonitoring,
@@ -715,3 +917,25 @@ function sipService(user: User) {
 }
 
 export default sipService;
+
+const useAudioContext = () => {
+  const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
+
+  const getAudioContext = () => {
+    if (!audioContext) {
+      const ac = new AudioContext();
+      setAudioContext(ac);
+      return ac;
+    }
+    return audioContext;
+  };
+
+  const closeAudioContext = () => {
+    if (audioContext) {
+      audioContext.close();
+      setAudioContext(null);
+    }
+  };
+
+  return { getAudioContext, closeAudioContext };
+};

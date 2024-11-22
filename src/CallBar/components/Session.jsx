@@ -1,8 +1,8 @@
 import React from "react";
 import { CustomSessionState } from "../../services/sip/type";
-import { MdOutlineCall, MdPause, MdPlayArrow } from "react-icons/md";
+import { MdMerge, MdOutlineCall, MdPause, MdPlayArrow } from "react-icons/md";
 
-function Session({session, handleHold, handleTerminate}) {
+function Session({ session, handleHold, handleTerminate, handleConference }) {
   return (
     <div className="dropdown dropdown-hover">
       <button tabIndex={0} className="btn btn-sm text-xs">
@@ -23,10 +23,6 @@ function Session({session, handleHold, handleTerminate}) {
             {session?.number}
           </span>
         )}
-        {/* <button className="btn btn-sm justify-start">Beklemeye Al</button>
-              <button className="btn btn-sm btn-error">
-                Görüşmeyi Bitir
-              </button> */}
         <div className="flex justify-evenly">
           <label
             className={`btn btn-circle btn-sm swap swap-rotate ${
@@ -42,6 +38,14 @@ function Session({session, handleHold, handleTerminate}) {
             <MdPause className="swap-off" />
             <MdPlayArrow className="swap-on" />
           </label>
+          {/* {session.sessionState !== CustomSessionState.InConference && (
+            <button
+              className="btn btn-circle btn-sm"
+              onClick={handleConference}
+            >
+              <MdMerge />
+            </button>
+          )} */}
           <button
             className="btn btn-circle btn-error btn-sm"
             onClick={handleTerminate}
